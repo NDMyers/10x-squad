@@ -314,13 +314,12 @@ function resolveModelIntent(request) {
 }
 
 function fail(message) {
-  const jsonEncodedMessage = JSON.stringify(String(message)).slice(1, -1);
-  const safeMessage = jsonEncodedMessage.replace(
-    /[\u007f-\u009f\u2028\u2029]/gu,
+  const safeMessage = String(message).replace(
+    /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu,
     (character) => `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`
   );
   process.stderr.write(`Model resolver error: ${safeMessage}\n`);
-  process.exit(2);
+  process.exitCode = 2;
 }
 
 const COMMANDS = {
@@ -334,6 +333,7 @@ function main(argv) {
     fail(
       'usage: model-id-resolver.js <resolve|verification-targets|build-profile> --input <request.json>'
     );
+    return;
   }
 
   try {
@@ -342,6 +342,7 @@ function main(argv) {
       : null;
     if (!handler) {
       fail(`unknown command ${JSON.stringify(argv[0])}`);
+      return;
     }
     const request = JSON.parse(fs.readFileSync(argv[2], 'utf8'));
     process.stdout.write(`${JSON.stringify(handler(request))}\n`);

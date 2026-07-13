@@ -543,13 +543,15 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   assert.match(rejectedProfileResult.stderr, /missing probe/u);
   assert.equal(rejectedProfileResult.stderr.trim().split('\n').length, 1);
 
+  const printableErrorText = 'sixth "quoted" \\path';
   const multilineFailurePath = writeRequest({
     ...session,
     probes: {
       [model]: {
         ok: false,
         requested_model: model,
-        error: 'first\nsecond\u0085third\u2028fourth\u2029fifth\u001b[2J',
+        error: 'first\nsecond\u0085third\u2028fourth\u2029fifth\u001b[2J'
+          + printableErrorText,
         checked_at: '2026-07-13T01:00:00.000Z',
       },
     },
@@ -572,8 +574,9 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
     stderrPayload,
     /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u
   );
+  assert.equal(stderrPayload.endsWith(printableErrorText), true);
   for (const encoded of [
-    '\\n',
+    '\\u000a',
     '\\u0085',
     '\\u2028',
     '\\u2029',
@@ -581,6 +584,30 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   ]) {
     assert.equal(stderrPayload.includes(encoded), true);
   }
+
+  const largeError = 'x'.repeat(256 * 1024);
+  const largeFailurePath = writeRequest({
+    ...session,
+    probes: {
+      [model]: {
+        ok: false,
+        requested_model: model,
+        error: largeError,
+        checked_at: '2026-07-13T01:00:00.000Z',
+      },
+    },
+  });
+  const largeFailureResult = runResolver([
+    'build-profile',
+    '--input',
+    largeFailurePath,
+  ]);
+  const expectedLargeStderr = `Model resolver error: probe failed for ${model}: ${largeError}\n`;
+
+  assert.equal(largeFailureResult.status, 2);
+  assert.equal(largeFailureResult.stdout, '');
+  assert.equal(largeFailureResult.stderr.length, expectedLargeStderr.length);
+  assert.equal(largeFailureResult.stderr, expectedLargeStderr);
 
   const successfulPath = writeRequest({
     ...session,
@@ -653,4 +680,10 @@ test('CLI contract errors exit 2 with empty stdout and one stderr line', () => {
     const stderr = result.stderr.trim();
     assert.equal(stderr.split('\n').length, 1);
   }
+
+  const unknownResult = runResolver(['unknown', '--input', validPath]);
+  assert.equal(
+    unknownResult.stderr,
+    'Model resolver error: unknown command "unknown"\n'
+  );
 });
