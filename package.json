@@ -6,7 +6,7 @@
     "10x-squad": "bin/10x-squad.js"
   },
   "scripts": {
-    "test": "node --test test/installer.test.js"
+    "test": "node --test"
   },
   "keywords": [
     "10x-squad",

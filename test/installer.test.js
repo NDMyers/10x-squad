@@ -17,17 +17,34 @@ const skillNames = [
   '10x-cobalt-review',
   '10x-sentinel-review',
   '10x-ralph-test',
+  '10x-squad-configure-tiers',
 ];
+
+function walkFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...walkFiles(full));
+    } else {
+      out.push(full);
+    }
+  }
+  return out;
+}
 
 const assets = [
   {
     source: path.join(packageRoot, 'assets', 'agents', '10x-squad.agent.md'),
     target: path.join('.github', 'agents', '10x-squad.agent.md'),
   },
-  ...skillNames.map((skillName) => ({
-    source: path.join(packageRoot, 'assets', 'skills', skillName, 'SKILL.md'),
-    target: path.join('.github', 'skills', skillName, 'SKILL.md'),
-  })),
+  ...skillNames.flatMap((skillName) => {
+    const skillDir = path.join(packageRoot, 'assets', 'skills', skillName);
+    return walkFiles(skillDir).map((source) => ({
+      source,
+      target: path.join('.github', 'skills', skillName, path.relative(skillDir, source)),
+    }));
+  }),
 ];
 
 function makeTempDir() {
@@ -123,6 +140,67 @@ test('install does not create or modify CAT installation files', () => {
   assertInstalledAssets(workspace);
   assert.equal(fs.readFileSync(catConfig, 'utf8'), 'not: valid: cat: config\n');
   assert.equal(fs.readFileSync(catArtifact, 'utf8'), 'preserve cat artifact\n');
+});
+
+test('configure-tiers skill installs as a complete package with nested resources', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install'], workspace);
+
+  const skillRoot = path.join(workspace, '.github', 'skills', '10x-squad-configure-tiers');
+  for (const rel of [
+    'SKILL.md',
+    path.join('scripts', 'model-tier-config.js'),
+    path.join('references', 'config-format.md'),
+    path.join('agents', 'openai.yaml'),
+  ]) {
+    assert.ok(fs.existsSync(path.join(skillRoot, rel)), `missing nested resource ${rel}`);
+  }
+});
+
+test('every nested skill resource is copied byte-for-byte', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install'], workspace);
+
+  for (const skillName of skillNames) {
+    const skillDir = path.join(packageRoot, 'assets', 'skills', skillName);
+    for (const source of walkFiles(skillDir)) {
+      const target = path.join(workspace, '.github', 'skills', skillName, path.relative(skillDir, source));
+      assert.deepEqual(fs.readFileSync(target), fs.readFileSync(source), target);
+    }
+  }
+});
+
+test('asset enumeration is deterministic and sorted within each skill', () => {
+  const script = "process.stdout.write(JSON.stringify(require('./lib/installer.js').assets.map((a) => a.target)))";
+  const runs = [0, 1].map(() => {
+    const result = spawnSync(process.execPath, ['-e', script], { cwd: packageRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  });
+  assert.equal(runs[0], runs[1]);
+
+  const targets = JSON.parse(runs[0]);
+  for (const skillName of skillNames) {
+    const inSkill = targets.filter((t) => t.includes(path.join('skills', skillName) + path.sep));
+    assert.ok(inSkill.length >= 1, `no assets enumerated for ${skillName}`);
+    assert.deepEqual(inSkill, [...inSkill].sort(), `assets for ${skillName} must be sorted`);
+  }
+});
+
+test('reinstall preserves .10x-squad/model-routing.json and stays idempotent', () => {
+  const workspace = makeTempDir();
+  const configFile = path.join(workspace, '.10x-squad', 'model-routing.json');
+  fs.mkdirSync(path.dirname(configFile), { recursive: true });
+  fs.writeFileSync(configFile, '{"sentinel":"preserve-me"}\n');
+
+  runCli(['install'], workspace);
+  assert.equal(fs.readFileSync(configFile, 'utf8'), '{"sentinel":"preserve-me"}\n');
+
+  runCli(['install'], workspace);
+  assert.equal(fs.readFileSync(configFile, 'utf8'), '{"sentinel":"preserve-me"}\n');
+  assertInstalledAssets(workspace);
 });
 
 test('package remains independent from @corpay/ai-dlc-toolkit', () => {
