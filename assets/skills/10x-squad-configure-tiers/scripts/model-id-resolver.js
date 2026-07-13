@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('node:fs');
+
 const AUTO_REASON = 'squad invariant: Auto banned';
 const INHERIT_REASON = 'inherit is not an executable model identifier';
 const AUTO = /^auto(?:\s*\([^)]*\))?$/iu;
 const INHERIT = /^inherit(?:\s*\([^)]*\))?$/iu;
+const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -87,6 +90,42 @@ function commonResult(prepared) {
   };
 }
 
+function matchingSignature(value) {
+  let text = value.normalize('NFKC').toLowerCase().trim();
+  text = text.replace(/\(\s*copilot\s*\)\s*$/iu, ' ');
+  text = text.replace(/\bthinking\b/gu, ' ');
+  text = text.replace(/\b(?:low|medium|high|x[\s-]?high)\s+effort\b/gu, ' ');
+  text = text.replace(/\beffort(?:\s+(?:low|medium|high|x[\s-]?high))?\b/gu, ' ');
+  text = text.replace(
+    /\bfor\s+(?:trivial|lite|standard(?:\s+(?:clear|ambiguous))?|complex)(?:\s+work)?\b.*$/gu,
+    ' '
+  );
+  return text
+    .replace(/[()._\-\u2010-\u2015]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function uniqueModelIds(assignments) {
+  if (!isPlainObject(assignments)) {
+    throw new Error('assignments must be an object');
+  }
+  const keys = Object.keys(assignments);
+  if (
+    keys.length !== TIER_KEYS.length
+    || TIER_KEYS.some(
+      (tier) => !Object.prototype.hasOwnProperty.call(assignments, tier)
+    )
+  ) {
+    throw new Error('assignments must contain exactly the five canonical tier keys');
+  }
+  const values = Object.values(assignments);
+  if (values.some((value) => typeof value !== 'string' || value.trim() === '')) {
+    throw new Error('assignments must contain non-empty strings');
+  }
+  return [...new Set(values)];
+}
+
 function resolveModelIntent(request) {
   if (
     !isPlainObject(request)
@@ -119,6 +158,30 @@ function resolveModelIntent(request) {
     };
   }
 
+  const signature = matchingSignature(request.user_input);
+  const matches = prepared.models.filter(
+    (model) => matchingSignature(model) === signature
+  );
+
+  if (matches.length === 1) {
+    return {
+      ...commonResult(prepared),
+      state: 'likely',
+      candidate: matches[0],
+      candidates: matches,
+      requires_confirmation: true,
+    };
+  }
+
+  if (matches.length > 1) {
+    return {
+      ...commonResult(prepared),
+      state: 'ambiguous',
+      candidates: matches,
+      requires_choice: true,
+    };
+  }
+
   return {
     ...commonResult(prepared),
     state: 'no_match',
@@ -126,10 +189,37 @@ function resolveModelIntent(request) {
   };
 }
 
+function fail(message) {
+  process.stderr.write(`Model resolver error: ${message}\n`);
+  process.exit(2);
+}
+
+function main(argv) {
+  if (argv.length !== 3 || argv[1] !== '--input') {
+    fail('usage: model-id-resolver.js resolve --input <request.json>');
+  }
+
+  try {
+    const request = JSON.parse(fs.readFileSync(argv[2], 'utf8'));
+    if (argv[0] !== 'resolve') {
+      fail(`unknown command ${JSON.stringify(argv[0])}`);
+    }
+    process.stdout.write(`${JSON.stringify(resolveModelIntent(request))}\n`);
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
+if (require.main === module) {
+  main(process.argv.slice(2));
+}
+
 module.exports = {
   AUTO_REASON,
   INHERIT_REASON,
   forbiddenReason,
+  matchingSignature,
   prepareCatalog,
   resolveModelIntent,
+  uniqueModelIds,
 };
