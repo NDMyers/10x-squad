@@ -1,0 +1,4 @@
+interface:
+  display_name: "Configure 10x Squad Work Tiers"
+  short_description: "Assign exact subagent models to five work tiers"
+  default_prompt: "Use $10x-squad-configure-tiers to configure one model for all work tiers or assign each tier individually."
