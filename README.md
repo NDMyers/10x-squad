@@ -1,14 +1,19 @@
 # 10x-squad
 
-Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator agent) plus six persona skills (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) for GitHub Copilot.
+Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator agent) plus seven skills for GitHub Copilot: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model routing).
 
 ```
 assets/agents/10x-squad.agent.md     Vivaldi — orchestrator custom agent
-assets/skills/10x-*/SKILL.md         six persona skills
-lib/installer.js                     asset manifest + copy logic
+assets/skills/10x-*/                 seven skills, installed as complete packages
+                                     (SKILL.md + nested scripts/, references/, agents/)
+lib/installer.js                     asset manifest + recursive copy logic
 bin/10x-squad.js                     CLI: 10x-squad install [-d <dir>]
-test/installer.test.js               node --test suite (npm test)
+test/                                node --test suites (npm test runs full discovery)
 ```
+
+## Model routing
+
+Work-tier → model assignments are user configuration, not prompt content: `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves the exact model for every persona dispatch through the installed resolver script. **Reinstalling never touches these config files.** Vivaldi's own parent model is selected manually in the harness — Copilot Auto is banned at every level. Operator guide: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md` (Copilot CLI proven; VS Code pending its manual probe).
 
 ## The source-of-truth rule
 

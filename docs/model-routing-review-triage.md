@@ -1,5 +1,8 @@
 # Triage: Codex (GPT 5.6 Sol Ultra) Review of the Model-Routing Design
 
+> **Superseded (2026-07-13).** The v3 Auto-first design this triage produced was itself superseded by **v4: configurable work-tier model routing** — user-configured exact per-dispatch models, Auto banned unconditionally, model-ranking eval gates retired as a product decision. See `docs/plans/2026-07-13-configurable-work-tier-model-routing.md` (accepted plan) and `docs/model-tier-configuration.md` (operator guide). This file is preserved unedited below as the historical record of the v2→v3 review.
+
+
 **Date:** 2026-07-12 · **Reviewer verdict:** UNSOUND · **Triage outcome:** verdict **accepted in substance** — 12/12 findings accepted (10 outright, 2 with qualifications). The design was rewritten as MODEL-ROUTING.md **v3** (in `~/.claude/10x-squad/`); this file records what was accepted, what was verified vs. taken as cited, and the two qualifications.
 
 ## Verification record (symmetric duty)
