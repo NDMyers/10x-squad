@@ -120,3 +120,11 @@ CLI: shell tools run as the invoking user; `~/.config/10x-squad/model-routing.js
 | Resolver runs unattended | ✅ D1; denial visible D2 | pending manual |
 
 Consequences: Tasks 5–7 proceed with `copilot-cli` as the proven surface. `copilot-vscode` may be configured (its schema profile exists) but is documented **unsupported until the manual probe passes**, exactly per AC12. When the VS Code probe runs, append evidence here and update `docs/model-tier-configuration.md`.
+
+## Addendum — custom-agent load hazard (2026-07-13, e2e verification)
+
+In the automated verification shell, every CLI session logged `No model backend (auth, legacy provider, or BYOK registry) available, skipping custom agents load` at startup — including sessions whose model turns then succeeded. Consequence: `--agent 10x-squad` was **silently ignored** and the session ran the default agent (built-in `explore`/`task`/`general-purpose` only). Root cause is environmental (early credential access during init — likely sandbox/keychain interaction), not a squad defect; end-user terminal sessions load custom agents normally.
+
+**Operational hazard worth knowing regardless of cause: the CLI does not error when a requested `--agent` fails to load — it degrades silently.** Mitigation is built into the squad's guardrails: Vivaldi introduces itself and announces `work tier + agent + resolved model` on every routing. **If a session does not open with Vivaldi's introduction, the custom agent did not load — stop and restart the session.**
+
+**Residual verification item (2-minute manual step):** in a normal terminal, run one trivial task through the installed squad (`copilot --agent 10x-squad -i "fix the typo in NOTES.md: 'teh' → 'the'"`) in a workspace with a configured `.10x-squad/model-routing.json`, and confirm: (1) Vivaldi introduces itself; (2) the routing announcement shows the resolved exact model; (3) the resolver command runs before dispatch; (4) the dispatch uses the configured model (visible in `subagent.started`). Mechanism-level evidence for all four is already captured above (Probes A/B/B2/D); this step confirms prompt compliance end-to-end.
