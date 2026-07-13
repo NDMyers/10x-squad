@@ -18,9 +18,11 @@ const SCRIPT = path.join(
 );
 
 const {
+  buildResolvedProfile,
   prepareCatalog,
   resolveModelIntent,
   uniqueModelIds,
+  verificationPlan,
 } = require(SCRIPT);
 
 function catalog(models) {
@@ -41,6 +43,24 @@ function writeRequest(value) {
 
 function runResolver(args) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+}
+
+function exactSelection(candidate) {
+  return { resolution: { state: 'exact', candidate } };
+}
+
+function likelySelection(candidate, confirmed) {
+  return { resolution: { state: 'likely', candidate }, confirmed };
+}
+
+function fiveSelections(value) {
+  return {
+    trivial: exactSelection(value),
+    lite: exactSelection(value),
+    standard_clear: exactSelection(value),
+    standard_ambiguous: exactSelection(value),
+    complex: exactSelection(value),
+  };
 }
 
 test('catalog excludes Copilot Auto with explicit reason and deduplicates exact identifiers', () => {
@@ -215,6 +235,173 @@ test('verification targets require exactly five nonblank canonical tiers', () =>
   );
 });
 
+test('verification plan requires five resolved confirmed catalog selections', () => {
+  const mini = 'GPT-5.4 mini (copilot)';
+  const advanced = 'GPT-5.5 (copilot)';
+  const request = {
+    harness: 'copilot-vscode',
+    catalog: catalog([mini, advanced]),
+    selections: fiveSelections(advanced),
+  };
+  const missingComplex = { ...request.selections };
+  delete missingComplex.complex;
+
+  assert.throws(
+    () => verificationPlan({ ...request, selections: missingComplex }),
+    /five canonical tier keys/
+  );
+  assert.throws(
+    () => verificationPlan({
+      ...request,
+      selections: {
+        ...request.selections,
+        complex: likelySelection(mini, false),
+      },
+    }),
+    /requires confirmation/
+  );
+  assert.throws(
+    () => verificationPlan({
+      ...request,
+      selections: {
+        ...request.selections,
+        complex: { resolution: { state: 'no_match' } },
+      },
+    }),
+    /is unresolved/
+  );
+  assert.throws(
+    () => verificationPlan({
+      ...request,
+      selections: fiveSelections('not in catalog'),
+    }),
+    /not in active harness catalog/
+  );
+});
+
+test('verification plan deduplicates exact candidates after selection validation', () => {
+  const mini = 'GPT-5.4 mini (copilot)';
+  const advanced = 'GPT-5.5 (copilot)';
+  const selections = {
+    ...fiveSelections(advanced),
+    trivial: exactSelection(mini),
+    lite: exactSelection(mini),
+  };
+
+  const result = verificationPlan({
+    harness: 'copilot-vscode',
+    catalog: catalog([mini, advanced]),
+    selections,
+  });
+
+  assert.deepEqual(result.verification_targets, [mini, advanced]);
+});
+
+test('profile builder derives one check per unique successful probe', () => {
+  const mini = 'GPT-5.4 mini (copilot)';
+  const advanced = 'GPT-5.5 (copilot)';
+  const selections = {
+    ...fiveSelections(advanced),
+    trivial: exactSelection(mini),
+    complex: likelySelection(advanced, true),
+  };
+  const profile = buildResolvedProfile({
+    harness: 'copilot-vscode',
+    catalog: catalog([mini, advanced]),
+    selections,
+    probes: {
+      [mini]: {
+        ok: true,
+        requested_model: mini,
+        identity_observable: false,
+        checked_at: '2026-07-13T01:00:00.000Z',
+      },
+      [advanced]: {
+        ok: true,
+        requested_model: advanced,
+        identity_observable: true,
+        executed_model: advanced,
+        checked_at: '2026-07-13T01:01:00.000Z',
+      },
+    },
+    original_input: 'must not be copied',
+  });
+
+  assert.equal(profile.assignments.trivial, mini);
+  assert.deepEqual(profile.model_checks, {
+    [mini]: {
+      status: 'unverified',
+      method: 'addressability_probe',
+      source: 'harness',
+      checked_at: '2026-07-13T01:00:00.000Z',
+    },
+    [advanced]: {
+      status: 'verified',
+      method: 'dispatch_smoke_test',
+      source: 'harness',
+      checked_at: '2026-07-13T01:01:00.000Z',
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(profile), /original_input/u);
+});
+
+test('profile builder rejects missing failed and mismatched probes', () => {
+  const model = 'GPT-5.5 (copilot)';
+  const request = {
+    harness: 'copilot-vscode',
+    catalog: catalog([model]),
+    selections: fiveSelections(model),
+  };
+  const checkedAt = '2026-07-13T01:00:00.000Z';
+
+  assert.throws(
+    () => buildResolvedProfile({ ...request, probes: {} }),
+    /missing probe/
+  );
+  assert.throws(
+    () => buildResolvedProfile({
+      ...request,
+      probes: {
+        [model]: {
+          ok: false,
+          requested_model: model,
+          checked_at: checkedAt,
+          error: 'model unavailable',
+        },
+      },
+    }),
+    /probe failed/
+  );
+  assert.throws(
+    () => buildResolvedProfile({
+      ...request,
+      probes: {
+        [model]: {
+          ok: true,
+          requested_model: model,
+          identity_observable: true,
+          executed_model: 'GPT-5.4 (copilot)',
+          checked_at: checkedAt,
+        },
+      },
+    }),
+    /requested\/executed model mismatch/
+  );
+  assert.throws(
+    () => buildResolvedProfile({
+      ...request,
+      probes: {
+        [model]: {
+          ok: true,
+          requested_model: model,
+          checked_at: checkedAt,
+        },
+      },
+    }),
+    /identity_observable is required/
+  );
+});
+
 test('forbidden user intent is rejected before matching', () => {
   const availableCatalog = catalog(['GPT-5.5', 'Auto']);
   const cases = [
@@ -291,6 +478,61 @@ test('malformed catalog data fails closed', () => {
   assert.throws(
     () => prepareCatalog(catalog(['GPT-5.5', '   ']), 'copilot-vscode'),
     /non-empty strings/
+  );
+});
+
+test('CLI verification-targets and build-profile use the executable gate', () => {
+  const model = 'GPT-5.5 (copilot)';
+  const session = {
+    harness: 'copilot-vscode',
+    catalog: catalog([model]),
+    selections: fiveSelections(model),
+    probes: {},
+  };
+  const requestPath = writeRequest(session);
+
+  const verificationResult = runResolver([
+    'verification-targets',
+    '--input',
+    requestPath,
+  ]);
+  const rejectedProfileResult = runResolver([
+    'build-profile',
+    '--input',
+    requestPath,
+  ]);
+
+  assert.equal(verificationResult.status, 0);
+  assert.deepEqual(
+    JSON.parse(verificationResult.stdout).verification_targets,
+    [model]
+  );
+  assert.equal(rejectedProfileResult.status, 2);
+  assert.equal(rejectedProfileResult.stdout, '');
+  assert.match(rejectedProfileResult.stderr, /missing probe/u);
+  assert.equal(rejectedProfileResult.stderr.trim().split('\n').length, 1);
+
+  const successfulPath = writeRequest({
+    ...session,
+    probes: {
+      [model]: {
+        ok: true,
+        requested_model: model,
+        identity_observable: false,
+        checked_at: '2026-07-13T01:00:00.000Z',
+      },
+    },
+  });
+  const successfulProfileResult = runResolver([
+    'build-profile',
+    '--input',
+    successfulPath,
+  ]);
+
+  assert.equal(successfulProfileResult.status, 0);
+  assert.equal(
+    JSON.parse(successfulProfileResult.stdout).model_checks[model].method,
+    'addressability_probe'
   );
 });
 

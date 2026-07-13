@@ -126,6 +126,115 @@ function uniqueModelIds(assignments) {
   return [...new Set(values)];
 }
 
+function resolvedAssignments(request) {
+  const prepared = prepareCatalog(request.catalog, request.harness);
+  if (!isPlainObject(request.selections)) {
+    throw new Error('selections must be an object');
+  }
+  const keys = Object.keys(request.selections);
+  if (
+    keys.length !== TIER_KEYS.length
+    || TIER_KEYS.some(
+      (tier) => !Object.prototype.hasOwnProperty.call(request.selections, tier)
+    )
+  ) {
+    throw new Error('selections must contain exactly the five canonical tier keys');
+  }
+
+  const assignments = {};
+  for (const tier of TIER_KEYS) {
+    const selection = request.selections[tier];
+    const resolution = isPlainObject(selection) ? selection.resolution : null;
+    if (
+      !isPlainObject(resolution)
+      || !['exact', 'likely'].includes(resolution.state)
+    ) {
+      throw new Error(`selection for ${tier} is unresolved`);
+    }
+    if (resolution.state === 'likely' && selection.confirmed !== true) {
+      throw new Error(`selection for ${tier} requires confirmation`);
+    }
+    if (
+      typeof resolution.candidate !== 'string'
+      || !prepared.models.includes(resolution.candidate)
+    ) {
+      throw new Error(`selection for ${tier} is not in active harness catalog`);
+    }
+    assignments[tier] = resolution.candidate;
+  }
+  return assignments;
+}
+
+function verificationPlan(request) {
+  const assignments = resolvedAssignments(request);
+  return {
+    assignments,
+    verification_targets: uniqueModelIds(assignments),
+  };
+}
+
+function buildResolvedProfile(request) {
+  const { assignments, verification_targets: verificationTargets } = verificationPlan(request);
+  if (!isPlainObject(request.probes)) {
+    throw new Error('probes must be an object');
+  }
+  for (const model of Object.keys(request.probes)) {
+    if (!verificationTargets.includes(model)) {
+      throw new Error(`unexpected probe for ${model}`);
+    }
+  }
+
+  const modelChecks = {};
+
+  for (const model of verificationTargets) {
+    const probe = request.probes[model];
+    if (!isPlainObject(probe)) {
+      throw new Error(`missing probe for ${model}`);
+    }
+    if (probe.requested_model !== model) {
+      throw new Error(`probe requested model does not match ${model}`);
+    }
+    if (probe.ok !== true) {
+      throw new Error(`probe failed for ${model}: ${probe.error || 'unknown failure'}`);
+    }
+    if (!isIsoTimestamp(probe.checked_at)) {
+      throw new Error(`valid ISO probe checked_at is required for ${model}`);
+    }
+    if (typeof probe.identity_observable !== 'boolean') {
+      throw new Error(`probe identity_observable is required for ${model}`);
+    }
+
+    if (probe.identity_observable) {
+      if (
+        typeof probe.executed_model !== 'string'
+        || probe.executed_model !== model
+      ) {
+        throw new Error(
+          `requested/executed model mismatch for ${model}: ${probe.executed_model}`
+        );
+      }
+      modelChecks[model] = {
+        status: 'verified',
+        method: 'dispatch_smoke_test',
+        source: 'harness',
+        checked_at: probe.checked_at,
+      };
+    } else {
+      if (Object.prototype.hasOwnProperty.call(probe, 'executed_model')) {
+        throw new Error(`unobservable probe must not supply executed_model for ${model}`);
+      }
+      modelChecks[model] = {
+        status: 'unverified',
+        method: 'addressability_probe',
+        source: 'harness',
+        checked_at: probe.checked_at,
+      };
+    }
+  }
+
+  return { assignments, model_checks: modelChecks };
+}
+
 function resolveModelIntent(request) {
   if (
     !isPlainObject(request)
@@ -203,17 +312,26 @@ function fail(message) {
   process.exit(2);
 }
 
+const COMMANDS = {
+  resolve: resolveModelIntent,
+  'verification-targets': verificationPlan,
+  'build-profile': buildResolvedProfile,
+};
+
 function main(argv) {
   if (argv.length !== 3 || argv[1] !== '--input') {
-    fail('usage: model-id-resolver.js resolve --input <request.json>');
+    fail(
+      'usage: model-id-resolver.js <resolve|verification-targets|build-profile> --input <request.json>'
+    );
   }
 
   try {
-    const request = JSON.parse(fs.readFileSync(argv[2], 'utf8'));
-    if (argv[0] !== 'resolve') {
+    const handler = COMMANDS[argv[0]];
+    if (!handler) {
       fail(`unknown command ${JSON.stringify(argv[0])}`);
     }
-    process.stdout.write(`${JSON.stringify(resolveModelIntent(request))}\n`);
+    const request = JSON.parse(fs.readFileSync(argv[2], 'utf8'));
+    process.stdout.write(`${JSON.stringify(handler(request))}\n`);
   } catch (error) {
     fail(error.message);
   }
@@ -226,9 +344,12 @@ if (require.main === module) {
 module.exports = {
   AUTO_REASON,
   INHERIT_REASON,
+  buildResolvedProfile,
   forbiddenReason,
   matchingSignature,
   prepareCatalog,
+  resolvedAssignments,
   resolveModelIntent,
   uniqueModelIds,
+  verificationPlan,
 };
