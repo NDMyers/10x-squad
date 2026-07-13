@@ -1,85 +1,55 @@
 ---
 name: 10x-squad-configure-tiers
-description: [TODO: Complete and informative explanation of what the skill does and when to use it. Include WHEN to use this skill - specific scenarios, file types, or tasks that trigger it.]
+description: View or change which exact model each 10x Squad work tier dispatches on. Use when the user asks to configure, review, or fix squad model assignments, or when Vivaldi reports missing/invalid model-routing configuration. Assigns one model to all five work tiers or each tier individually, per harness, at workspace or user-global scope.
 ---
 
-# 10x Squad Configure Tiers
+# Configure 10x Squad Work Tiers
 
-## Overview
+Maps the squad's five work-complexity tiers — `trivial`, `lite`, `standard_clear`, `standard_ambiguous`, `complex` — to exact, surface-native model identifiers for the active harness. Vivaldi resolves every persona dispatch through this configuration; personas stay model-agnostic.
 
-[TODO: 1-2 sentences explaining what this skill enables]
+All reads and writes go through the bundled engine, `scripts/model-tier-config.js` (schema, precedence, and exit codes: `references/config-format.md`). **Never edit `model-routing.json` directly** — the engine validates and writes atomically, and preserves other harness profiles.
 
-## Structuring This Skill
+## When this skill runs
 
-[TODO: Choose the structure that best fits this skill's purpose. Common patterns:
+- The user invokes `/10x-squad-configure-tiers`.
+- The user asks to view or change squad model assignments.
+- Vivaldi hit missing/invalid routing configuration (exit 2/3 from `resolve`) and offered this skill.
 
-**1. Workflow-Based** (best for sequential processes)
-- Works well when there are clear step-by-step procedures
-- Example: DOCX skill with "Workflow Decision Tree" -> "Reading" -> "Creating" -> "Editing"
-- Structure: ## Overview -> ## Workflow Decision Tree -> ## Step 1 -> ## Step 2...
+It never runs automatically during a healthy pipeline.
 
-**2. Task-Based** (best for tool collections)
-- Works well when the skill offers different operations/capabilities
-- Example: PDF skill with "Quick Start" -> "Merge PDFs" -> "Split PDFs" -> "Extract Text"
-- Structure: ## Overview -> ## Quick Start -> ## Task Category 1 -> ## Task Category 2...
+## Conversation flow
 
-**3. Reference/Guidelines** (best for standards or specifications)
-- Works well for brand guidelines, coding standards, or requirements
-- Example: Brand styling with "Brand Guidelines" -> "Colors" -> "Typography" -> "Features"
-- Structure: ## Overview -> ## Guidelines -> ## Specifications -> ## Usage...
+1. **Detect the active harness/surface** (`copilot-vscode`, `copilot-cli`, …). If uncertain, ask once — never guess an identifier namespace; VS Code and CLI identifiers are not interchangeable.
+2. **Show the current effective mapping**: run `resolve` for each of the five tier keys and display a five-row table with its source scope (workspace or global). If resolution fails, show the actionable error instead.
+3. **Ask for scope**: user-global or current workspace. A workspace save replaces that harness's global profile wholesale for this workspace (no per-key merge; the engine requires a complete five-key profile either way).
+4. **Offer actions**:
+   - Apply one model to **all five work tiers** (default-all).
+   - Configure **each work tier individually**.
+   - Review and validate the current mapping (read-only).
+   - Remove the active workspace profile (reveals the global profile).
+   - Refresh model suggestions.
+5. **Model selection** — present sections in this order, using the harness's structured choice UI when available and numbered choices otherwise; free text is always available:
+   1. **Verified available in this harness** (from `model_checks` with `status: "verified"`, or a current harness catalog check).
+   2. **Other current candidates** from an optional official/frontier scan — clearly marked *unverified here*. Prefer current official harness/provider sources; public benchmark evidence may be summarized but must carry its date and source, and must **never auto-select** a model. A failed or offline scan must not block manual configuration — fall through to free text.
+   3. **Exact free-text model identifier** — preserved byte-for-byte, visibly marked unverified until the active harness verifies it.
+   4. **Keep current value**, when one exists.
+6. **Reuse models already entered** this session so individual mode never repeats discovery five times.
+7. **Preview before writing**: build the proposal file (five `assignments`, optional `model_checks`) and run `diff-profile` — show both the stored-file change and the resulting effective five-row mapping.
+8. **Ask for confirmation.**
+9. **Write**: `upsert-profile` (validates first; `validate-profile` is available for a standalone check). Invalid input leaves the prior file untouched.
+10. **Prove the result**: run `resolve` again for all five tiers from the saved configuration and report the effective mapping and its scope.
 
-**4. Capabilities-Based** (best for integrated systems)
-- Works well when the skill provides multiple interrelated features
-- Example: Product Management with "Core Capabilities" -> numbered capability list
-- Structure: ## Overview -> ## Core Capabilities -> ### 1. Feature -> ### 2. Feature...
+For removal, run `remove-profile --dry-run` first, show what changes (including whether the file itself would be deleted), confirm, then remove and re-resolve to show the revealed global profile.
 
-Patterns can be mixed and matched as needed. Most skills combine patterns (e.g., start with task-based, add workflow for complex operations).
+## Default-all behavior
 
-Delete this entire "Structuring This Skill" section when done - it's just guidance.]
+"Apply one model to all five work tiers" asks for **one exact model identifier** and expands it into the five canonical keys before validation. No `default` value, flag, or inheritance rule is ever stored — the file always contains five explicit assignments.
 
-## [TODO: Replace with the first main section based on chosen structure]
+## Rules that protect the routing contract
 
-[TODO: Add content here. See examples in existing skills:
-- Code samples for technical skills
-- Decision trees for complex workflows
-- Concrete examples with realistic user requests
-- References to scripts/templates/references as needed]
-
-## Resources (optional)
-
-Create only the resource directories this skill actually needs. Delete this section if no resources are required.
-
-### scripts/
-Executable code (Python/Bash/etc.) that can be run directly to perform specific operations.
-
-**Examples from other skills:**
-- PDF skill: `fill_fillable_fields.py`, `extract_form_field_info.py` - utilities for PDF manipulation
-- DOCX skill: `document.py`, `utilities.py` - Python modules for document processing
-
-**Appropriate for:** Python scripts, shell scripts, or any executable code that performs automation, data processing, or specific operations.
-
-**Note:** Scripts may be executed without loading into context, but can still be read by Codex for patching or environment adjustments.
-
-### references/
-Documentation and reference material intended to be loaded into context to inform Codex's process and thinking.
-
-**Examples from other skills:**
-- Product management: `communication.md`, `context_building.md` - detailed workflow guides
-- BigQuery: API reference documentation and query examples
-- Finance: Schema documentation, company policies
-
-**Appropriate for:** In-depth documentation, API references, database schemas, comprehensive guides, or any detailed information that Codex should reference while working.
-
-### assets/
-Files not intended to be loaded into context, but rather used within the output Codex produces.
-
-**Examples from other skills:**
-- Brand styling: PowerPoint template files (.pptx), logo files
-- Frontend builder: HTML/React boilerplate project directories
-- Typography: Font files (.ttf, .woff2)
-
-**Appropriate for:** Templates, boilerplate code, document templates, images, icons, fonts, or any files meant to be copied or used in the final output.
-
----
-
-**Not every skill requires all three types of resources.**
+- Assignment values must be exact executable identifiers for the active surface. `auto` and `inherit` are banned in any casing — Copilot Auto is never used, at any level (squad invariant 12); the engine rejects them.
+- Catalog or documentation presence does not prove executability: mark a model `verified` only after an explicit subagent capability signal or an observable dispatch smoke test **on this surface**. Otherwise it stays visibly `unverified`.
+- Before substantive work on an unverified value, preflight it when the harness offers a harmless check; if only a dispatch can verify it, use a no-side-effect child probe and compare requested versus executed model where observable.
+- If the harness cannot address the identifier, changes provider unexpectedly, substitutes another model, or cannot make execution identity auditable — stop and report the surface, tier, configured ID, and this skill as the fix. Never continue on a "close" model.
+- A local/BYOK model is configurable only as an exact addressable identifier already exposed by the active harness/provider; endpoints and credentials are out of band and never stored here. Cross-provider child dispatch is unsupported until a dedicated compatibility test proves it.
+- Never write credentials into routing configuration; the engine rejects credential-shaped fields.
