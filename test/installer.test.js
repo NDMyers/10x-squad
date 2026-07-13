@@ -151,6 +151,7 @@ test('configure-tiers skill installs as a complete package with nested resources
   for (const rel of [
     'SKILL.md',
     path.join('scripts', 'model-tier-config.js'),
+    path.join('scripts', 'model-id-resolver.js'),
     path.join('references', 'config-format.md'),
     path.join('agents', 'openai.yaml'),
   ]) {
