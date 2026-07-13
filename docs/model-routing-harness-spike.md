@@ -1,7 +1,7 @@
 # Harness Spike — Explicit Per-Dispatch Subagent Model Routing
 
 **Plan:** `docs/plans/2026-07-13-configurable-work-tier-model-routing.md` (Task 0)
-**Started:** 2026-07-13 (Claude Fable 5) · **Status: IN PROGRESS — gate not yet passed**
+**Started:** 2026-07-13 (Claude Fable 5) · **Status: GATE PASSED for `copilot-cli` (all three pre-registered criteria, direct evidence below). `copilot-vscode` UNSUPPORTED-PENDING-MANUAL-PROBE per AC12.**
 
 ## Pre-registered evidence criteria (fixed 2026-07-13, before any probe ran)
 
@@ -63,14 +63,32 @@ Debug log: `No model backend (auth, legacy provider, or BYOK registry) available
 
 `--allow-tool "shell(node:*)"` (syntax per `copilot help permissions`; prefix matching on command stem) permits node invocations without per-call approval; `--deny-tool` precedence and `--available-tools` filtering documented. In-harness execution proof pending auth.
 
-## Step 4 — CLI child-dispatch probe: **PENDING AUTH**
+## Step 4 — CLI child-dispatch probes: **COMPLETED 2026-07-13 (post `copilot login`)** ✅
 
-Planned (run after `copilot login`):
+**Probe A — session-level observability (criteria §1, runtime):** `copilot -p "Reply with exactly: MODEL_ROUTE_OK" --model gpt-5.4-mini --output-format json --log-level all` → exit 0; JSONL events `assistant.turn_start`, `assistant.message`, `assistant.turn_end` each carry `"model": "gpt-5.4-mini"` (per-turn executed-model identity, machine-checkable, matching the request). Also verified for `gpt-5.4`.
 
-1. Probe A (session observability): `copilot -p "Reply with exactly: MODEL_ROUTE_OK" --model <entitled-slug> --output-format json --log-level all` → assert model identity appears in JSONL events/logs with requested value.
-2. Probe B (child divergence): parent model X, prompt dispatches one subagent explicitly on model Y (`different from X`), no-side-effect task; assert child events report Y and parent events report X.
-3. Probe B2 (invalid child model): child dispatch with invalid slug → assert hard stop, not substitution.
-4. Probe D (resolver in-harness): `--allow-tool "shell(node:*)"`, agent runs `node -e 'console.log(JSON.stringify({ok:true}))'` unattended; also run with the tool NOT allowed and assert declined execution is visible (maps to hard-stop contract).
+**Probe B — explicit per-dispatch child model (THE ACTUATOR):** parent `--model gpt-5.4-mini`, prompt dispatched one subagent on `gpt-5.4`:
+
+- The dispatch tool is `task` and accepts explicit arguments: `{"model": "gpt-5.4", "reasoning_effort": "low", "context_tier": "default", "agent_type": "general-purpose", "mode": "sync", ...}` — **per-dispatch model selection is a first-class tool parameter** (reasoning effort too).
+- `subagent.started` reports `"model": "gpt-5.4"`; the child's own `assistant.turn_start/message/turn_end` events carry `model: gpt-5.4` while parent events carry `gpt-5.4-mini`; `subagent.completed` confirms `gpt-5.4`. Requested vs executed comparison is direct and per-dispatch.
+- Cheaper-parent → pricier-child dispatch succeeded: **no VS Code-style cost-tier ceiling observed on CLI** for this pair.
+
+**Probe B2 — invalid child model fails loud:** child dispatch with `not-a-real-model-xyz` → `tool.execution_complete` `success: false`, error `"Model 'not-a-real-model-xyz' is not available. Available models: …"`, **no `subagent.started`, no substitution**. Bonus: the error enumerates the account's full entitled model list — a usable discovery mechanism for the configure skill. Entitled on this account 2026-07-13: `claude-sonnet-4.6, claude-sonnet-4.5, claude-haiku-4.5, claude-opus-4.8, claude-opus-4.7, claude-opus-4.6, claude-opus-4.5, gpt-5.5, gpt-5.4, gpt-5.3-codex, gpt-5.4-mini, gpt-5-mini, gemini-3.1-pro-preview, gemini-3.5-flash, mai-code-1-flash-picker` (15; snapshot, not defaults).
+
+**Probe D — unattended resolver (criteria §3):**
+
+- D1 with `--allow-tool "shell(node:*)"`: `node -e 'console.log(JSON.stringify({ok:true}))'` executed **without any approval prompt**; stdout returned verbatim. Resolver invocations can be allowlisted per session/config.
+- D2 with no allow flag (non-interactive): `tool.execution_complete` `success: false`, `error: "Permission denied and could not request permission from user"` — **declined execution is machine-visible**, satisfying the runtime contract's requirement that a declined resolver invocation maps to a hard configuration failure rather than improvisation.
+
+**Session-level availability note:** pre-auth, ALL slugs were rejected (`No model backend available`); post-auth, both probed session models worked and the child-level list above is authoritative for dispatch. Availability is entitlement- and auth-dependent — never assume from catalogs.
+
+### Step 8 gate evaluation — copilot-cli: **PASSED**
+
+| Pre-registered criterion | Evidence |
+|---|---|
+| §1 executed-model identity observable per dispatch | `assistant.turn_*`/`subagent.started`/`subagent.completed` events carry `model`; child ≠ parent proven |
+| §2 (CLI clause) runtime observability, not just spike-time | The JSONL event stream IS the session runtime output; debug logs additionally record model resolution with source attribution |
+| §3 resolver runs unattended; denial visible | D1 unattended success via `--allow-tool "shell(node:*)"`; D2 machine-visible denial |
 
 ## Steps 2–3 — VS Code probes: **PENDING MANUAL (operator)**
 
@@ -93,12 +111,12 @@ CLI: shell tools run as the invoking user; `~/.config/10x-squad/model-routing.js
 
 `copilot help providers` (BYOK topic) exists in CLI 1.0.70. Not configured on this machine → **untested**, per plan: absence of local-provider setup does not block cloud-only v1; cross-provider child dispatch remains unsupported until proven.
 
-## Step 8 — Gate status: **NOT PASSED**
+## Step 8 — Gate status: **PASSED for `copilot-cli`; `copilot-vscode` UNSUPPORTED-PENDING-MANUAL-PROBE**
 
 | Gate requirement | CLI | VS Code |
 |---|---|---|
-| Explicit per-dispatch selection | pending auth | pending manual |
-| Executed-model identity observable (criteria §1) | pending auth | pending manual |
-| Resolver runs unattended | mechanism ✅, proof pending | pending manual |
+| Explicit per-dispatch selection | ✅ `task` tool `model` argument (Probe B) | pending manual (§Steps 2–3 checklist) |
+| Executed-model identity observable (criteria §1) | ✅ turn/subagent events | pending manual |
+| Resolver runs unattended | ✅ D1; denial visible D2 | pending manual |
 
-Tasks 1–4 (additive: config engine, skill, installer) proceed — they have no dependency on gate outcome. **Tasks 5–6 (production prompt rewrite + doctrine retirement) are HELD until this gate passes on at least one surface**; any unproved surface will be marked unsupported per AC12.
+Consequences: Tasks 5–7 proceed with `copilot-cli` as the proven surface. `copilot-vscode` may be configured (its schema profile exists) but is documented **unsupported until the manual probe passes**, exactly per AC12. When the VS Code probe runs, append evidence here and update `docs/model-tier-configuration.md`.
