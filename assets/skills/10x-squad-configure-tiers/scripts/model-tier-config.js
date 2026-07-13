@@ -16,7 +16,6 @@ const crypto = require('node:crypto');
 
 const SCHEMA_VERSION = 1;
 const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
-const FORBIDDEN_VALUES = new Set(['auto', 'inherit']);
 const CONFIG_FIELDS = new Set(['schema_version', 'updated_at', 'harnesses']);
 const PROFILE_FIELDS = new Set(['assignments', 'model_checks']);
 const CHECK_FIELDS = new Set(['display_name', 'status', 'method', 'source', 'checked_at']);
@@ -37,6 +36,11 @@ function isPlainObject(v) {
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
+
+function isForbiddenAssignment(value) {
+  if (typeof value !== 'string') return false;
+  return /^(?:auto|inherit)(?:\s*\([^)]*\))?$/iu.test(value.trim());
+}
 
 function fieldError(where, field) {
   const kind = CREDENTIAL_FIELD.test(field) ? 'credential-shaped field' : 'unknown field';
@@ -67,7 +71,7 @@ function validateProfile(profile) {
       const v = a[tier];
       if (typeof v !== 'string' || v.trim() === '') {
         errors.push(`assignments.${tier}: value must be a non-empty exact model identifier, got ${JSON.stringify(v)}`);
-      } else if (FORBIDDEN_VALUES.has(v.trim().toLowerCase())) {
+      } else if (isForbiddenAssignment(v)) {
         errors.push(`assignments.${tier}: ${JSON.stringify(v)} is not an exact model identifier (auto/inherit are banned)`);
       }
     }
@@ -141,7 +145,7 @@ function validateConfigShape(cfg) {
     }
     for (const tier of TIER_KEYS) {
       const v = a[tier];
-      if (typeof v !== 'string' || v.trim() === '' || FORBIDDEN_VALUES.has(v.trim().toLowerCase())) {
+      if (typeof v !== 'string' || v.trim() === '' || isForbiddenAssignment(v)) {
         errors.push(`harnesses.${harness}.assignments.${tier}: missing or invalid exact model identifier`);
       }
     }
@@ -547,6 +551,7 @@ module.exports = {
   TIER_KEYS,
   EXIT,
   expandDefaultAll,
+  isForbiddenAssignment,
   validateProfile,
   validateConfigShape,
   usableCheckStatus,

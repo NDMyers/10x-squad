@@ -16,7 +16,9 @@ const {
   TIER_KEYS,
   SCHEMA_VERSION,
   expandDefaultAll,
+  isForbiddenAssignment,
   validateProfile,
+  validateConfigShape,
   upsertProfile,
   removeProfile,
   resolve,
@@ -108,12 +110,38 @@ test('per-tier mode requires exactly all five canonical keys', () => {
 });
 
 test('auto, inherit, blank, null, and non-string assignments are invalid', () => {
-  for (const bad of ['auto', 'Auto', 'AUTO', 'inherit', 'Inherit', '', '   ', null, 42, {}, []]) {
+  for (const bad of [
+    'auto',
+    'Auto',
+    'AUTO',
+    'Auto (copilot)',
+    'AUTO (GitHub Copilot)',
+    'inherit',
+    'Inherit',
+    'inherit (surface)',
+    '',
+    '   ',
+    null,
+    42,
+    {},
+    [],
+  ]) {
     const p = mkProfile('ok-model');
     p.assignments.lite = bad;
     const r = validateProfile(p, { harness: 'h' });
     assert.equal(r.ok, false, `expected invalid for ${JSON.stringify(bad)}`);
   }
+});
+
+test('isForbiddenAssignment recognizes decorated auto and inherit values', () => {
+  for (const value of ['Auto (copilot)', 'AUTO (GitHub Copilot)', 'inherit (surface)']) {
+    assert.equal(isForbiddenAssignment(value), true, `expected forbidden for ${JSON.stringify(value)}`);
+  }
+});
+
+test('stored config rejects a decorated auto assignment', () => {
+  const cfg = mkConfig({ 'copilot-cli': 'Auto (copilot)' });
+  assert.equal(validateConfigShape(cfg).ok, false);
 });
 
 test('unknown profile-level fields are rejected (strict allowlist)', () => {
@@ -143,11 +171,11 @@ test('model_checks status must be verified or unverified in a proposal', () => {
   assert.equal(validateProfile(p, { harness: 'h' }).ok, false);
 });
 
-test('free-text identifiers are preserved byte-for-byte', () => {
-  const weird = '  My Local Llama 70B (exp) — v2  ';
-  const p = { assignments: mkAssignments(weird) };
-  const cfg = upsertProfile(null, 'copilot-cli', p, '2026-07-13T01:00:00.000Z');
-  assert.equal(cfg.harnesses['copilot-cli'].assignments.trivial, weird);
+test('already-resolved opaque exact identifier is preserved byte-for-byte', () => {
+  const exactModel = 'Claude Sonnet 4.5 (copilot)';
+  const p = { assignments: mkAssignments(exactModel) };
+  const cfg = upsertProfile(null, 'copilot-vscode', p, '2026-07-13T01:00:00.000Z');
+  assert.equal(cfg.harnesses['copilot-vscode'].assignments.trivial, exactModel);
 });
 
 // ---------------------------------------------------------------------------
@@ -467,6 +495,23 @@ test('upsert-profile: invalid input exits nonzero and leaves the prior file unch
   assert.equal(fs.readFileSync(sb.wsFile, 'utf8'), beforeBytes);
 });
 
+test('upsert-profile: decorated auto exits 2 and leaves the prior file byte-for-byte unchanged', () => {
+  const sb = sandbox();
+  writeJson(sb.wsFile, mkConfig({ 'copilot-cli': 'keep-me' }));
+  const beforeBytes = fs.readFileSync(sb.wsFile, 'utf8');
+
+  const proposal = path.join(sb.root, 'proposal.json');
+  const bad = mkProfile('m');
+  bad.assignments.lite = 'Auto (copilot)';
+  writeJson(proposal, bad);
+  const r = runCli(
+    ['upsert-profile', '--input', proposal, '--scope', 'workspace', '--workspace-root', sb.root, '--harness', 'copilot-cli'],
+    { env: sb.env }
+  );
+  assert.equal(r.code, 2);
+  assert.equal(fs.readFileSync(sb.wsFile, 'utf8'), beforeBytes);
+});
+
 test('upsert-profile: global scope writes under XDG_CONFIG_HOME', () => {
   const sb = sandbox();
   const proposal = path.join(sb.root, 'proposal.json');
@@ -546,11 +591,11 @@ test('remove-profile: keeps the file when other harness profiles remain', () => 
   assert.equal(cfg.harnesses['copilot-vscode'].assignments.lite, 'b');
 });
 
-test('free-text value round-trips byte-for-byte through the CLI and resolves unverified', () => {
+test('already-resolved opaque exact identifier round-trips byte-for-byte through the CLI and resolves unverified', () => {
   const sb = sandbox();
-  const weird = 'Llama-3.3-70B @local (byok) — «exact»';
+  const exactModel = 'claude-sonnet-4.5';
   const proposal = path.join(sb.root, 'proposal.json');
-  writeJson(proposal, { assignments: mkAssignments(weird) });
+  writeJson(proposal, { assignments: mkAssignments(exactModel) });
   let r = runCli(
     ['upsert-profile', '--input', proposal, '--scope', 'workspace', '--workspace-root', sb.root, '--harness', 'copilot-cli'],
     { env: sb.env }
@@ -562,6 +607,6 @@ test('free-text value round-trips byte-for-byte through the CLI and resolves unv
     { env: sb.env }
   );
   const out = JSON.parse(r.stdout);
-  assert.equal(out.model, weird);
+  assert.equal(out.model, exactModel);
   assert.equal(out.check_status, 'unverified');
 });
