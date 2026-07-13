@@ -549,7 +549,7 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
       [model]: {
         ok: false,
         requested_model: model,
-        error: 'first line\nsecond line',
+        error: 'first\nsecond\u0085third\u2028fourth\u2029fifth\u001b[2J',
         checked_at: '2026-07-13T01:00:00.000Z',
       },
     },
@@ -562,10 +562,25 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
 
   assert.equal(multilineFailureResult.status, 2);
   assert.equal(multilineFailureResult.stdout, '');
+  assert.equal(multilineFailureResult.stderr.endsWith('\n'), true);
   assert.equal(
-    multilineFailureResult.stderr.trim().split(/\r?\n/u).length,
+    (multilineFailureResult.stderr.match(/\n/gu) || []).length,
     1
   );
+  const stderrPayload = multilineFailureResult.stderr.slice(0, -1);
+  assert.doesNotMatch(
+    stderrPayload,
+    /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u
+  );
+  for (const encoded of [
+    '\\n',
+    '\\u0085',
+    '\\u2028',
+    '\\u2029',
+    '\\u001b',
+  ]) {
+    assert.equal(stderrPayload.includes(encoded), true);
+  }
 
   const successfulPath = writeRequest({
     ...session,

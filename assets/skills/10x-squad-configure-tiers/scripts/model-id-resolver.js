@@ -314,8 +314,12 @@ function resolveModelIntent(request) {
 }
 
 function fail(message) {
-  const sanitizedMessage = String(message).replace(/[\r\n]+/gu, ' ');
-  process.stderr.write(`Model resolver error: ${sanitizedMessage}\n`);
+  const jsonEncodedMessage = JSON.stringify(String(message)).slice(1, -1);
+  const safeMessage = jsonEncodedMessage.replace(
+    /[\u007f-\u009f\u2028\u2029]/gu,
+    (character) => `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`
+  );
+  process.stderr.write(`Model resolver error: ${safeMessage}\n`);
   process.exit(2);
 }
 
