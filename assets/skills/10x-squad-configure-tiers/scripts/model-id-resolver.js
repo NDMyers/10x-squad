@@ -92,7 +92,6 @@ function commonResult(prepared) {
 
 function matchingSignature(value) {
   let text = value.normalize('NFKC').toLowerCase().trim();
-  text = text.replace(/\(\s*copilot\s*\)\s*$/iu, ' ');
   text = text.replace(/\bthinking\b/gu, ' ');
   text = text.replace(/\b(?:low|medium|high|x[\s-]?high)\s+effort\b/gu, ' ');
   text = text.replace(/\beffort(?:\s+(?:low|medium|high|x[\s-]?high))?\b/gu, ' ');
@@ -100,6 +99,7 @@ function matchingSignature(value) {
     /\bfor\s+(?:trivial|lite|standard(?:\s+(?:clear|ambiguous))?|complex)(?:\s+work)?\b.*$/gu,
     ' '
   );
+  text = text.replace(/\(\s*copilot\s*\)\s*$/iu, ' ');
   return text
     .replace(/[()._\-\u2010-\u2015]+/gu, ' ')
     .replace(/\s+/gu, ' ')
@@ -159,6 +159,15 @@ function resolveModelIntent(request) {
   }
 
   const signature = matchingSignature(request.user_input);
+
+  if (signature === '') {
+    return {
+      ...commonResult(prepared),
+      state: 'no_match',
+      candidates: [],
+    };
+  }
+
   const matches = prepared.models.filter(
     (model) => matchingSignature(model) === signature
   );

@@ -82,6 +82,15 @@ test('descriptive effort text produces a likely model candidate', () => {
   assert.equal(result.state, 'likely');
   assert.equal(result.candidate, 'GPT-5.5 (copilot)');
   assert.equal(result.requires_confirmation, true);
+
+  const composedResult = resolveModelIntent({
+    harness: 'copilot-vscode',
+    user_input: 'GPT-5.5 (copilot) Thinking XHigh Effort',
+    catalog: catalog(['GPT-5.5 (copilot)']),
+  });
+
+  assert.equal(composedResult.state, 'likely');
+  assert.equal(composedResult.candidate, 'GPT-5.5 (copilot)');
 });
 
 test('mini remains distinguishing in descriptive model intent', () => {
@@ -147,6 +156,14 @@ test('model-distinguishing symbols do not become likely matches', () => {
   });
 
   assert.equal(result.state, 'no_match');
+
+  const emptySignatureResult = resolveModelIntent({
+    harness: 'copilot-vscode',
+    user_input: '---',
+    catalog: catalog(['...']),
+  });
+
+  assert.equal(emptySignatureResult.state, 'no_match');
 });
 
 test('verification targets deduplicate repeated exact assignments', () => {
