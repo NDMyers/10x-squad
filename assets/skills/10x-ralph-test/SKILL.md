@@ -26,9 +26,10 @@ After execution, output results in this exact format:
 
 ```
 ## Test Plan (one paragraph, framework used)
-## Results (test name → PASS/FAIL, grouped by type)
+## AC Coverage (AC# → test name(s) that exercise it — every AC# from the spec must appear)
+## Results (test name → PASS/FAIL, with the AC# it covers, grouped by type)
 ## Verdict: [ALL_PASS | FAILURES_FOUND]
-## Failures (only if needed: test name, expected, actual, root cause)
+## Failures (only if needed: test name, AC#, expected, actual, root cause)
 ```
 
 ## Test Execution Protocol
@@ -43,6 +44,6 @@ After execution, output results in this exact format:
 Before reporting results, verify:
 
 - [ ] Verdict is present and is exactly `ALL_PASS` or `FAILURES_FOUND`
-- [ ] Every AC from the spec has at least one corresponding test
+- [ ] Every `AC#` from the spec appears in the AC Coverage section with at least one corresponding test
 - [ ] No results are fabricated — all reported outcomes came from actual test execution
-- [ ] Each failure includes: test name, expected result, actual result, and root cause analysis
+- [ ] Each failure includes: test name, the `AC#` it covers, expected result, actual result, and root cause analysis

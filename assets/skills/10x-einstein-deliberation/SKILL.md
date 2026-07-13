@@ -9,6 +9,30 @@ This skill contains Einstein's full output templates and internal deliberation p
 
 ---
 
+## Decision Trace IDs (MANDATORY)
+
+Einstein assigns a stable trace ID to every material decision, constraint, and surfaced assumption: `D1`, `D2`, … `Dn`. These IDs are the backbone of the squad's traceability chain:
+
+- Peter cites the `D#` each Architecture point and Acceptance Criterion derives from.
+- Linus cites the `AC#`/`D#` each changed file satisfies.
+- Vivaldi runs a mechanical gate at each handoff verifying every `D#` is consumed downstream (or explicitly carried forward). A dropped `D#` hard-blocks the handoff.
+
+Rules:
+- One ID per atomic decision. Do not bundle two decisions under one ID.
+- IDs are immutable once assigned. If a decision is revised in a later cycle, keep the ID and note the revision — never renumber.
+- Every Assumption Surfaced and every Decision Driver gets an ID. Approach Candidates do not (only the *recommended* approach's constituent decisions are tagged).
+
+## Tiered Artifact Convention (MANDATORY)
+
+Every brief Einstein writes to `brief.md` has two parts:
+
+1. **Lean Header** (target ≤ 1.5K tokens) — the distilled contract downstream agents always read: Deliberation Summary, the `D#` decision table (ID → one-line decision), Recommendation, and Open Questions.
+2. **Appendix** — full Approach Candidates, Socratic reasoning, and tradeoff detail. Pulled by downstream agents ONLY on dispute or escalation.
+
+Cross-references use pointers (`see brief.md#D3`), never inlined copies of upstream content.
+
+---
+
 ## Output Mode A — Deliberation Brief (Standard-ambiguous)
 
 Einstein MUST produce output in this exact structure:
@@ -17,10 +41,16 @@ Einstein MUST produce output in this exact structure:
 ## Deliberation Summary
 One-paragraph restatement of the problem as Einstein understands it after analysis.
 
+## Decision Table
+| ID | Decision / Constraint | One-line rationale |
+|----|----------------------|--------------------|
+| D1 | ...                  | ...                |
+(Every material decision and surfaced assumption gets a stable D# here. This table is part of the Lean Header.)
+
 ## Assumptions Surfaced
 Numbered list of implicit assumptions identified in the request
-that need confirmation or rejection. Each entry states the assumption
-and its impact if wrong.
+that need confirmation or rejection. Each entry states the assumption,
+its impact if wrong, and its `D#` from the Decision Table.
 
 ## Approach Candidates
 For each viable approach (minimum 2, maximum 4):
@@ -57,7 +87,7 @@ Why this decision is needed — the forces at play.
 
 ### Decision Drivers
 Numbered list of prioritized constraints (performance, maintainability,
-security, time-to-ship, team familiarity, etc.).
+security, time-to-ship, team familiarity, etc.). Each driver gets a `D#`.
 
 ### Decision
 The recommended architectural direction, stated concretely.
@@ -161,5 +191,7 @@ Before accepting Einstein's output:
 2. Are Approach Candidates genuinely distinct (not cosmetic variations)?
 3. Are Open Questions specific and actionable (not generic boilerplate)?
 4. If Mode B: Does the PRD Seed have concrete FR/NFR items (not placeholders)?
+5. Does every material decision and surfaced assumption have a unique, stable `D#` in the Decision Table?
+6. Is the brief split into a Lean Header (≤ ~1.5K tokens) and an Appendix?
 
 If any check fails, send Einstein a single focused revision prompt. **Maximum 1 revision cycle.**
