@@ -121,6 +121,10 @@ test('malformed catalog data fails closed', () => {
     /models must be an array/
   );
   assert.throws(
+    () => prepareCatalog({ ...catalog(['GPT-5.5']), models: new Array(1) }, 'copilot-vscode'),
+    /non-empty strings/
+  );
+  assert.throws(
     () => prepareCatalog(catalog(['GPT-5.5', '   ']), 'copilot-vscode'),
     /non-empty strings/
   );

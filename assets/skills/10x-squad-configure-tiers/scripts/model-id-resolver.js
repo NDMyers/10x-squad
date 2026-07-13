@@ -54,15 +54,15 @@ function prepareCatalog(catalog, harness) {
   if (!Array.isArray(catalog.models)) {
     throw new TypeError('catalog models must be an array');
   }
-  if (catalog.models.some((model) => typeof model !== 'string' || model.trim() === '')) {
-    throw new TypeError('catalog models must contain non-empty strings');
-  }
 
   const models = [];
   const excluded = [];
   const seen = new Set();
 
   for (const model of catalog.models) {
+    if (typeof model !== 'string' || model.trim() === '') {
+      throw new TypeError('catalog models must contain non-empty strings');
+    }
     if (seen.has(model)) {
       continue;
     }
