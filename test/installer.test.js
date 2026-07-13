@@ -153,6 +153,7 @@ test('configure-tiers skill installs as a complete package with nested resources
     path.join('scripts', 'model-tier-config.js'),
     path.join('scripts', 'model-id-resolver.js'),
     path.join('references', 'config-format.md'),
+    path.join('references', 'model-resolution.md'),
     path.join('agents', 'openai.yaml'),
   ]) {
     assert.ok(fs.existsSync(path.join(skillRoot, rel)), `missing nested resource ${rel}`);
