@@ -184,9 +184,12 @@ function buildResolvedProfile(request) {
     }
   }
 
-  const modelChecks = {};
+  const modelCheckEntries = [];
 
   for (const model of verificationTargets) {
+    if (!Object.prototype.hasOwnProperty.call(request.probes, model)) {
+      throw new Error(`missing probe for ${model}`);
+    }
     const probe = request.probes[model];
     if (!isPlainObject(probe)) {
       throw new Error(`missing probe for ${model}`);
@@ -213,26 +216,29 @@ function buildResolvedProfile(request) {
           `requested/executed model mismatch for ${model}: ${probe.executed_model}`
         );
       }
-      modelChecks[model] = {
+      modelCheckEntries.push([model, {
         status: 'verified',
         method: 'dispatch_smoke_test',
         source: 'harness',
         checked_at: probe.checked_at,
-      };
+      }]);
     } else {
       if (Object.prototype.hasOwnProperty.call(probe, 'executed_model')) {
         throw new Error(`unobservable probe must not supply executed_model for ${model}`);
       }
-      modelChecks[model] = {
+      modelCheckEntries.push([model, {
         status: 'unverified',
         method: 'addressability_probe',
         source: 'harness',
         checked_at: probe.checked_at,
-      };
+      }]);
     }
   }
 
-  return { assignments, model_checks: modelChecks };
+  return {
+    assignments,
+    model_checks: Object.fromEntries(modelCheckEntries),
+  };
 }
 
 function resolveModelIntent(request) {
@@ -308,7 +314,8 @@ function resolveModelIntent(request) {
 }
 
 function fail(message) {
-  process.stderr.write(`Model resolver error: ${message}\n`);
+  const sanitizedMessage = String(message).replace(/[\r\n]+/gu, ' ');
+  process.stderr.write(`Model resolver error: ${sanitizedMessage}\n`);
   process.exit(2);
 }
 
@@ -326,7 +333,9 @@ function main(argv) {
   }
 
   try {
-    const handler = COMMANDS[argv[0]];
+    const handler = Object.prototype.hasOwnProperty.call(COMMANDS, argv[0])
+      ? COMMANDS[argv[0]]
+      : null;
     if (!handler) {
       fail(`unknown command ${JSON.stringify(argv[0])}`);
     }

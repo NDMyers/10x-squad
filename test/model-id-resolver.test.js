@@ -343,6 +343,28 @@ test('profile builder derives one check per unique successful probe', () => {
     },
   });
   assert.doesNotMatch(JSON.stringify(profile), /original_input/u);
+
+  const protoModel = '__proto__';
+  const protoProfile = buildResolvedProfile({
+    harness: 'copilot-vscode',
+    catalog: catalog([protoModel]),
+    selections: fiveSelections(protoModel),
+    probes: Object.fromEntries([
+      [protoModel, {
+        ok: true,
+        requested_model: protoModel,
+        identity_observable: false,
+        checked_at: '2026-07-13T01:02:00.000Z',
+      }],
+    ]),
+  });
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(protoProfile.model_checks, protoModel),
+    true
+  );
+  assert.equal(protoProfile.model_checks[protoModel].method, 'addressability_probe');
+  assert.equal(protoProfile.model_checks[protoModel].status, 'unverified');
 });
 
 test('profile builder rejects missing failed and mismatched probes', () => {
@@ -356,6 +378,15 @@ test('profile builder rejects missing failed and mismatched probes', () => {
 
   assert.throws(
     () => buildResolvedProfile({ ...request, probes: {} }),
+    /missing probe/
+  );
+  assert.throws(
+    () => buildResolvedProfile({
+      harness: 'copilot-vscode',
+      catalog: catalog(['__proto__']),
+      selections: fiveSelections('__proto__'),
+      probes: {},
+    }),
     /missing probe/
   );
   assert.throws(
@@ -512,6 +543,30 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   assert.match(rejectedProfileResult.stderr, /missing probe/u);
   assert.equal(rejectedProfileResult.stderr.trim().split('\n').length, 1);
 
+  const multilineFailurePath = writeRequest({
+    ...session,
+    probes: {
+      [model]: {
+        ok: false,
+        requested_model: model,
+        error: 'first line\nsecond line',
+        checked_at: '2026-07-13T01:00:00.000Z',
+      },
+    },
+  });
+  const multilineFailureResult = runResolver([
+    'build-profile',
+    '--input',
+    multilineFailurePath,
+  ]);
+
+  assert.equal(multilineFailureResult.status, 2);
+  assert.equal(multilineFailureResult.stdout, '');
+  assert.equal(
+    multilineFailureResult.stderr.trim().split(/\r?\n/u).length,
+    1
+  );
+
   const successfulPath = writeRequest({
     ...session,
     probes: {
@@ -569,6 +624,7 @@ test('CLI contract errors exit 2 with empty stdout and one stderr line', () => {
   const cases = [
     [],
     ['unknown', '--input', validPath],
+    ['constructor', '--input', validPath],
     ['resolve', '--input', missingPath],
     ['resolve', '--input', malformedPath],
   ];
