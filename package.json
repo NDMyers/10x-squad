@@ -1,0 +1,21 @@
+{
+  "name": "10x-squad",
+  "version": "0.1.0",
+  "description": "Standalone 10x Squad workspace customization installer",
+  "bin": {
+    "10x-squad": "bin/10x-squad.js"
+  },
+  "scripts": {
+    "test": "node --test test/installer.test.js"
+  },
+  "keywords": [
+    "10x-squad",
+    "copilot",
+    "agents",
+    "skills"
+  ],
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
