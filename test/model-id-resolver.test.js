@@ -25,9 +25,9 @@ const {
   verificationPlan,
 } = require(SCRIPT);
 
-function catalog(models) {
+function catalog(models, harness = 'copilot-vscode') {
   return {
-    harness: 'copilot-vscode',
+    harness,
     source: 'harness',
     checked_at: '2026-07-13T00:00:00.000Z',
     models,
@@ -45,21 +45,79 @@ function runResolver(args) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
 }
 
-function exactSelection(candidate) {
+function exactSelection(
+  candidate,
+  reasoningEffort = 'auto',
+  contextTier = 'auto'
+) {
+  return {
+    resolution: { state: 'exact', candidate },
+    reasoning_effort: reasoningEffort,
+    context_tier: contextTier,
+  };
+}
+
+function likelySelection(
+  candidate,
+  confirmed,
+  reasoningEffort = 'auto',
+  contextTier = 'auto'
+) {
+  return {
+    resolution: { state: 'likely', candidate },
+    confirmed,
+    reasoning_effort: reasoningEffort,
+    context_tier: contextTier,
+  };
+}
+
+function fiveSelections(
+  value,
+  reasoningEffort = 'auto',
+  contextTier = 'auto'
+) {
+  return {
+    trivial: exactSelection(value, reasoningEffort, contextTier),
+    lite: exactSelection(value, reasoningEffort, contextTier),
+    standard_clear: exactSelection(value, reasoningEffort, contextTier),
+    standard_ambiguous: exactSelection(value, reasoningEffort, contextTier),
+    complex: exactSelection(value, reasoningEffort, contextTier),
+  };
+}
+
+function automaticSelection(candidate) {
   return { resolution: { state: 'exact', candidate } };
 }
 
-function likelySelection(candidate, confirmed) {
-  return { resolution: { state: 'likely', candidate }, confirmed };
+function expectedTarget(
+  model,
+  reasoningEffort = 'auto',
+  contextTier = 'auto'
+) {
+  const dispatchArguments = { model };
+  if (reasoningEffort !== 'auto') {
+    dispatchArguments.reasoning_effort = reasoningEffort;
+  }
+  if (contextTier !== 'auto') {
+    dispatchArguments.context_tier = contextTier;
+  }
+  return {
+    id: JSON.stringify([model, reasoningEffort, contextTier]),
+    model,
+    reasoning_effort: reasoningEffort,
+    context_tier: contextTier,
+    dispatch_arguments: dispatchArguments,
+  };
 }
 
-function fiveSelections(value) {
+function successfulProbe(target, overrides = {}) {
   return {
-    trivial: exactSelection(value),
-    lite: exactSelection(value),
-    standard_clear: exactSelection(value),
-    standard_ambiguous: exactSelection(value),
-    complex: exactSelection(value),
+    ok: true,
+    requested_model: target.model,
+    requested_arguments: { ...target.dispatch_arguments },
+    identity_observable: false,
+    checked_at: '2026-07-13T01:00:00.000Z',
+    ...overrides,
   };
 }
 
@@ -335,55 +393,207 @@ test('verification plan requires five resolved confirmed catalog selections', ()
   );
 });
 
-test('verification plan deduplicates exact candidates after selection validation', () => {
+test('verification plan returns complete settings and exact executable tuple targets', () => {
   const mini = 'GPT-5.4 mini (copilot)';
   const advanced = 'GPT-5.5 (copilot)';
   const selections = {
-    ...fiveSelections(advanced),
-    trivial: exactSelection(mini),
-    lite: exactSelection(mini),
+    ...fiveSelections(advanced, 'medium', 'long_context'),
+    trivial: exactSelection(mini, 'auto', 'auto'),
+    lite: exactSelection(mini, 'auto', 'auto'),
   };
 
   const result = verificationPlan({
-    harness: 'copilot-vscode',
-    catalog: catalog([mini, advanced]),
+    harness: 'copilot-cli',
+    catalog: catalog([mini, advanced], 'copilot-cli'),
     selections,
   });
 
-  assert.deepEqual(result.verification_targets, [mini, advanced]);
+  assert.deepEqual(result, {
+    assignments: {
+      trivial: mini,
+      lite: mini,
+      standard_clear: advanced,
+      standard_ambiguous: advanced,
+      complex: advanced,
+    },
+    dispatch_settings: {
+      trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
+      lite: { reasoning_effort: 'auto', context_tier: 'auto' },
+      standard_clear: {
+        reasoning_effort: 'medium',
+        context_tier: 'long_context',
+      },
+      standard_ambiguous: {
+        reasoning_effort: 'medium',
+        context_tier: 'long_context',
+      },
+      complex: {
+        reasoning_effort: 'medium',
+        context_tier: 'long_context',
+      },
+    },
+    verification_targets: [
+      expectedTarget(mini),
+      expectedTarget(advanced, 'medium', 'long_context'),
+    ],
+  });
 });
 
-test('profile builder derives one check per unique successful probe', () => {
+test('omitted selection settings default to auto and auto arguments are omitted', () => {
+  const model = 'GPT-5.5 (copilot)';
+  const selections = Object.fromEntries([
+    'trivial',
+    'lite',
+    'standard_clear',
+    'standard_ambiguous',
+    'complex',
+  ].map((tier) => [tier, automaticSelection(model)]));
+
+  const result = verificationPlan({
+    harness: 'copilot-vscode',
+    catalog: catalog([model]),
+    selections,
+  });
+
+  assert.deepEqual(result.dispatch_settings, {
+    trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
+    lite: { reasoning_effort: 'auto', context_tier: 'auto' },
+    standard_clear: { reasoning_effort: 'auto', context_tier: 'auto' },
+    standard_ambiguous: { reasoning_effort: 'auto', context_tier: 'auto' },
+    complex: { reasoning_effort: 'auto', context_tier: 'auto' },
+  });
+  assert.deepEqual(result.verification_targets, [expectedTarget(model)]);
+  assert.deepEqual(result.verification_targets[0].dispatch_arguments, { model });
+});
+
+test('verification targets deduplicate full tuples but keep settings variants', () => {
+  const model = 'gpt-5.4';
+  const selections = {
+    trivial: exactSelection(model, 'low', 'auto'),
+    lite: exactSelection(model, 'low', 'auto'),
+    standard_clear: exactSelection(model, 'auto', 'default'),
+    standard_ambiguous: exactSelection(model, 'high', 'long_context'),
+    complex: exactSelection(model, 'high', 'long_context'),
+  };
+
+  const result = verificationPlan({
+    harness: 'copilot-cli',
+    catalog: catalog([model], 'copilot-cli'),
+    selections,
+  });
+
+  assert.deepEqual(result.verification_targets, [
+    expectedTarget(model, 'low', 'auto'),
+    expectedTarget(model, 'auto', 'default'),
+    expectedTarget(model, 'high', 'long_context'),
+  ]);
+});
+
+test('verification plan accepts only canonical reasoning and context settings', () => {
+  const model = 'gpt-5.4';
+  const reasoningValues = ['auto', 'low', 'medium', 'high', 'xhigh'];
+  const contextValues = ['auto', 'default', 'long_context'];
+  const validSelections = Object.fromEntries(reasoningValues.map((reasoning, index) => [
+    ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'][index],
+    exactSelection(model, reasoning, contextValues[index % contextValues.length]),
+  ]));
+
+  assert.equal(verificationPlan({
+    harness: 'copilot-cli',
+    catalog: catalog([model], 'copilot-cli'),
+    selections: validSelections,
+  }).verification_targets.length, 5);
+
+  for (const invalid of ['Auto', 'inherit', '', null, 42, {}, [], undefined]) {
+    const badReasoning = fiveSelections(model);
+    badReasoning.lite.reasoning_effort = invalid;
+    assert.throws(
+      () => verificationPlan({
+        harness: 'copilot-cli',
+        catalog: catalog([model], 'copilot-cli'),
+        selections: badReasoning,
+      }),
+      /reasoning_effort must be one of auto, low, medium, high, xhigh/
+    );
+
+    const badContext = fiveSelections(model);
+    badContext.lite.context_tier = invalid;
+    assert.throws(
+      () => verificationPlan({
+        harness: 'copilot-cli',
+        catalog: catalog([model], 'copilot-cli'),
+        selections: badContext,
+      }),
+      /context_tier must be one of auto, default, long_context/
+    );
+  }
+});
+
+test('invalid settings fail before profile probe construction', () => {
+  const model = 'gpt-5.4';
+  const selections = fiveSelections(model);
+  selections.complex.context_tier = 'extended';
+  const request = {
+    harness: 'copilot-cli',
+    catalog: catalog([model], 'copilot-cli'),
+    selections,
+  };
+  Object.defineProperty(request, 'probes', {
+    get() {
+      assert.fail('probes must not be read when settings are invalid');
+    },
+  });
+
+  assert.throws(
+    () => buildResolvedProfile(request),
+    /context_tier must be one of auto, default, long_context/
+  );
+});
+
+test('profile builder returns complete assignments settings and model checks', () => {
   const mini = 'GPT-5.4 mini (copilot)';
   const advanced = 'GPT-5.5 (copilot)';
+  const miniTarget = expectedTarget(mini);
+  const advancedTarget = expectedTarget(advanced, 'medium', 'long_context');
   const selections = {
-    ...fiveSelections(advanced),
+    ...fiveSelections(advanced, 'medium', 'long_context'),
     trivial: exactSelection(mini),
-    complex: likelySelection(advanced, true),
+    complex: likelySelection(advanced, true, 'medium', 'long_context'),
   };
   const profile = buildResolvedProfile({
-    harness: 'copilot-vscode',
-    catalog: catalog([mini, advanced]),
+    harness: 'copilot-cli',
+    catalog: catalog([mini, advanced], 'copilot-cli'),
     selections,
-    probes: {
-      [mini]: {
-        ok: true,
-        requested_model: mini,
-        identity_observable: false,
-        checked_at: '2026-07-13T01:00:00.000Z',
-      },
-      [advanced]: {
-        ok: true,
-        requested_model: advanced,
+    probes: Object.fromEntries([
+      [miniTarget.id, successfulProbe(miniTarget)],
+      [advancedTarget.id, successfulProbe(advancedTarget, {
         identity_observable: true,
         executed_model: advanced,
         checked_at: '2026-07-13T01:01:00.000Z',
-      },
-    },
+      })],
+    ]),
     original_input: 'must not be copied',
   });
 
+  assert.deepEqual(Object.keys(profile).sort(), [
+    'assignments',
+    'dispatch_settings',
+    'model_checks',
+  ]);
   assert.equal(profile.assignments.trivial, mini);
+  assert.deepEqual(profile.dispatch_settings, {
+    trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
+    lite: { reasoning_effort: 'medium', context_tier: 'long_context' },
+    standard_clear: {
+      reasoning_effort: 'medium',
+      context_tier: 'long_context',
+    },
+    standard_ambiguous: {
+      reasoning_effort: 'medium',
+      context_tier: 'long_context',
+    },
+    complex: { reasoning_effort: 'medium', context_tier: 'long_context' },
+  });
   assert.deepEqual(profile.model_checks, {
     [mini]: {
       status: 'unverified',
@@ -401,17 +611,15 @@ test('profile builder derives one check per unique successful probe', () => {
   assert.doesNotMatch(JSON.stringify(profile), /original_input/u);
 
   const protoModel = '__proto__';
+  const protoTarget = expectedTarget(protoModel);
   const protoProfile = buildResolvedProfile({
     harness: 'copilot-vscode',
     catalog: catalog([protoModel]),
     selections: fiveSelections(protoModel),
     probes: Object.fromEntries([
-      [protoModel, {
-        ok: true,
-        requested_model: protoModel,
-        identity_observable: false,
+      [protoTarget.id, successfulProbe(protoTarget, {
         checked_at: '2026-07-13T01:02:00.000Z',
-      }],
+      })],
     ]),
   });
 
@@ -423,14 +631,71 @@ test('profile builder derives one check per unique successful probe', () => {
   assert.equal(protoProfile.model_checks[protoModel].status, 'unverified');
 });
 
-test('profile builder rejects missing failed and mismatched probes', () => {
+test('model checks stay unverified if any tuple probe lacks observable identity', () => {
+  const model = 'gpt-5.4';
+  const autoTarget = expectedTarget(model);
+  const explicitTarget = expectedTarget(model, 'high', 'long_context');
+  const selections = {
+    ...fiveSelections(model, 'high', 'long_context'),
+    trivial: exactSelection(model),
+    lite: exactSelection(model),
+  };
+  const request = {
+    harness: 'copilot-cli',
+    catalog: catalog([model], 'copilot-cli'),
+    selections,
+  };
+
+  const conservative = buildResolvedProfile({
+    ...request,
+    probes: Object.fromEntries([
+      [autoTarget.id, successfulProbe(autoTarget)],
+      [explicitTarget.id, successfulProbe(explicitTarget, {
+        identity_observable: true,
+        executed_model: model,
+        checked_at: '2026-07-13T01:01:00.000Z',
+      })],
+    ]),
+  });
+
+  assert.deepEqual(conservative.model_checks[model], {
+    status: 'unverified',
+    method: 'addressability_probe',
+    source: 'harness',
+    checked_at: '2026-07-13T01:00:00.000Z',
+  });
+
+  const fullyObservable = buildResolvedProfile({
+    ...request,
+    probes: Object.fromEntries([
+      [autoTarget.id, successfulProbe(autoTarget, {
+        identity_observable: true,
+        executed_model: model,
+      })],
+      [explicitTarget.id, successfulProbe(explicitTarget, {
+        identity_observable: true,
+        executed_model: model,
+        checked_at: '2026-07-13T01:02:00.000Z',
+      })],
+    ]),
+  });
+
+  assert.deepEqual(fullyObservable.model_checks[model], {
+    status: 'verified',
+    method: 'dispatch_smoke_test',
+    source: 'harness',
+    checked_at: '2026-07-13T01:02:00.000Z',
+  });
+});
+
+test('profile builder requires exactly one probe keyed by every target id', () => {
   const model = 'GPT-5.5 (copilot)';
+  const target = expectedTarget(model);
   const request = {
     harness: 'copilot-vscode',
     catalog: catalog([model]),
     selections: fiveSelections(model),
   };
-  const checkedAt = '2026-07-13T01:00:00.000Z';
 
   assert.throws(
     () => buildResolvedProfile({ ...request, probes: {} }),
@@ -448,13 +713,39 @@ test('profile builder rejects missing failed and mismatched probes', () => {
   assert.throws(
     () => buildResolvedProfile({
       ...request,
+      probes: Object.fromEntries([
+        [target.id, successfulProbe(target)],
+        ['unexpected-target', successfulProbe(target)],
+      ]),
+    }),
+    /unexpected probe/
+  );
+  assert.throws(
+    () => buildResolvedProfile({
+      ...request,
+      probes: { [model]: successfulProbe(target) },
+    }),
+    /unexpected probe/
+  );
+});
+
+test('profile builder rejects failed and model-mismatched probes', () => {
+  const model = 'GPT-5.5 (copilot)';
+  const target = expectedTarget(model);
+  const request = {
+    harness: 'copilot-vscode',
+    catalog: catalog([model]),
+    selections: fiveSelections(model),
+  };
+
+  assert.throws(
+    () => buildResolvedProfile({
+      ...request,
       probes: {
-        [model]: {
+        [target.id]: successfulProbe(target, {
           ok: false,
-          requested_model: model,
-          checked_at: checkedAt,
           error: 'model unavailable',
-        },
+        }),
       },
     }),
     /probe failed/
@@ -463,13 +754,21 @@ test('profile builder rejects missing failed and mismatched probes', () => {
     () => buildResolvedProfile({
       ...request,
       probes: {
-        [model]: {
-          ok: true,
-          requested_model: model,
+        [target.id]: successfulProbe(target, {
+          requested_model: 'GPT-5.4 (copilot)',
+        }),
+      },
+    }),
+    /probe requested model does not match/
+  );
+  assert.throws(
+    () => buildResolvedProfile({
+      ...request,
+      probes: {
+        [target.id]: successfulProbe(target, {
           identity_observable: true,
           executed_model: 'GPT-5.4 (copilot)',
-          checked_at: checkedAt,
-        },
+        }),
       },
     }),
     /requested\/executed model mismatch/
@@ -478,14 +777,63 @@ test('profile builder rejects missing failed and mismatched probes', () => {
     () => buildResolvedProfile({
       ...request,
       probes: {
-        [model]: {
-          ok: true,
-          requested_model: model,
-          checked_at: checkedAt,
+        [target.id]: {
+          ...successfulProbe(target),
+          identity_observable: undefined,
         },
       },
     }),
     /identity_observable is required/
+  );
+});
+
+test('probe requested arguments must exactly match dispatch arguments', () => {
+  const model = 'gpt-5.4';
+  const explicitTarget = expectedTarget(model, 'medium', 'long_context');
+  const explicitRequest = {
+    harness: 'copilot-cli',
+    catalog: catalog([model], 'copilot-cli'),
+    selections: fiveSelections(model, 'medium', 'long_context'),
+  };
+  const mismatches = [
+    { model, reasoning_effort: 'medium' },
+    { model, reasoning_effort: 'high', context_tier: 'long_context' },
+    {
+      model,
+      reasoning_effort: 'medium',
+      context_tier: 'long_context',
+      temperature: 0,
+    },
+    null,
+  ];
+
+  for (const requestedArguments of mismatches) {
+    assert.throws(
+      () => buildResolvedProfile({
+        ...explicitRequest,
+        probes: {
+          [explicitTarget.id]: successfulProbe(explicitTarget, {
+            requested_arguments: requestedArguments,
+          }),
+        },
+      }),
+      /probe requested arguments do not match dispatch arguments/
+    );
+  }
+
+  const autoTarget = expectedTarget(model);
+  assert.throws(
+    () => buildResolvedProfile({
+      harness: 'copilot-cli',
+      catalog: catalog([model], 'copilot-cli'),
+      selections: fiveSelections(model),
+      probes: {
+        [autoTarget.id]: successfulProbe(autoTarget, {
+          requested_arguments: { model, reasoning_effort: 'auto' },
+        }),
+      },
+    }),
+    /probe requested arguments do not match dispatch arguments/
   );
 });
 
@@ -602,6 +950,7 @@ test('catalog exclusions accept only canonical forbidden records', () => {
 
 test('CLI verification-targets and build-profile use the executable gate', () => {
   const model = 'GPT-5.5 (copilot)';
+  const target = expectedTarget(model);
   const session = {
     harness: 'copilot-vscode',
     catalog: catalog([model]),
@@ -624,7 +973,7 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   assert.equal(verificationResult.status, 0);
   assert.deepEqual(
     JSON.parse(verificationResult.stdout).verification_targets,
-    [model]
+    [target]
   );
   assert.equal(rejectedProfileResult.status, 2);
   assert.equal(rejectedProfileResult.stdout, '');
@@ -635,13 +984,11 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   const multilineFailurePath = writeRequest({
     ...session,
     probes: {
-      [model]: {
+      [target.id]: successfulProbe(target, {
         ok: false,
-        requested_model: model,
         error: 'first\nsecond\u0085third\u2028fourth\u2029fifth\u001b[2J'
           + printableErrorText,
-        checked_at: '2026-07-13T01:00:00.000Z',
-      },
+      }),
     },
   });
   const multilineFailureResult = runResolver([
@@ -677,12 +1024,10 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   const largeFailurePath = writeRequest({
     ...session,
     probes: {
-      [model]: {
+      [target.id]: successfulProbe(target, {
         ok: false,
-        requested_model: model,
         error: largeError,
-        checked_at: '2026-07-13T01:00:00.000Z',
-      },
+      }),
     },
   });
   const largeFailureResult = runResolver([
@@ -690,7 +1035,7 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
     '--input',
     largeFailurePath,
   ]);
-  const expectedLargeStderr = `Model resolver error: probe failed for ${model}: ${largeError}\n`;
+  const expectedLargeStderr = `Model resolver error: probe failed for ${target.id}: ${largeError}\n`;
 
   assert.equal(largeFailureResult.status, 2);
   assert.equal(largeFailureResult.stdout, '');
@@ -700,12 +1045,7 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   const successfulPath = writeRequest({
     ...session,
     probes: {
-      [model]: {
-        ok: true,
-        requested_model: model,
-        identity_observable: false,
-        checked_at: '2026-07-13T01:00:00.000Z',
-      },
+      [target.id]: successfulProbe(target),
     },
   });
   const successfulProfileResult = runResolver([

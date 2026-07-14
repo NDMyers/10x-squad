@@ -8,6 +8,8 @@ const INHERIT_REASON = 'inherit is not an executable model identifier';
 const AUTO = /^auto(?:\s*\([^)]*\))?$/iu;
 const INHERIT = /^inherit(?:\s*\([^)]*\))?$/iu;
 const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
+const REASONING_EFFORTS = ['auto', 'low', 'medium', 'high', 'xhigh'];
+const CONTEXT_TIERS = ['auto', 'default', 'long_context'];
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -186,79 +188,198 @@ function resolvedAssignments(request) {
   return assignments;
 }
 
-function verificationPlan(request) {
-  const assignments = resolvedAssignments(request);
+function resolvedDispatchSettings(selections) {
+  if (!isPlainObject(selections)) {
+    throw new Error('selections must be an object');
+  }
+  const keys = Object.keys(selections);
+  if (
+    keys.length !== TIER_KEYS.length
+    || TIER_KEYS.some(
+      (tier) => !Object.prototype.hasOwnProperty.call(selections, tier)
+    )
+  ) {
+    throw new Error('selections must contain exactly the five canonical tier keys');
+  }
+
+  const dispatchSettings = {};
+  for (const tier of TIER_KEYS) {
+    const selection = selections[tier];
+    if (!isPlainObject(selection)) {
+      throw new Error(`selection for ${tier} is unresolved`);
+    }
+    const reasoningEffort = Object.prototype.hasOwnProperty.call(
+      selection,
+      'reasoning_effort'
+    ) ? selection.reasoning_effort : 'auto';
+    const contextTier = Object.prototype.hasOwnProperty.call(
+      selection,
+      'context_tier'
+    ) ? selection.context_tier : 'auto';
+    if (!REASONING_EFFORTS.includes(reasoningEffort)) {
+      throw new Error(
+        `selection for ${tier} reasoning_effort must be one of ${REASONING_EFFORTS.join(', ')}`
+      );
+    }
+    if (!CONTEXT_TIERS.includes(contextTier)) {
+      throw new Error(
+        `selection for ${tier} context_tier must be one of ${CONTEXT_TIERS.join(', ')}`
+      );
+    }
+    dispatchSettings[tier] = {
+      reasoning_effort: reasoningEffort,
+      context_tier: contextTier,
+    };
+  }
+  return dispatchSettings;
+}
+
+function verificationTarget(model, setting) {
+  const { reasoning_effort: reasoningEffort, context_tier: contextTier } = setting;
+  const dispatchArguments = { model };
+  if (reasoningEffort !== 'auto') {
+    dispatchArguments.reasoning_effort = reasoningEffort;
+  }
+  if (contextTier !== 'auto') {
+    dispatchArguments.context_tier = contextTier;
+  }
   return {
-    assignments,
-    verification_targets: uniqueModelIds(assignments),
+    id: JSON.stringify([model, reasoningEffort, contextTier]),
+    model,
+    reasoning_effort: reasoningEffort,
+    context_tier: contextTier,
+    dispatch_arguments: dispatchArguments,
   };
 }
 
+function uniqueVerificationTargets(assignments, dispatchSettings) {
+  const targets = [];
+  const seen = new Set();
+  for (const tier of TIER_KEYS) {
+    const target = verificationTarget(assignments[tier], dispatchSettings[tier]);
+    if (!seen.has(target.id)) {
+      seen.add(target.id);
+      targets.push(target);
+    }
+  }
+  return targets;
+}
+
+function verificationPlan(request) {
+  const assignments = resolvedAssignments(request);
+  const dispatchSettings = resolvedDispatchSettings(request.selections);
+  return {
+    assignments,
+    dispatch_settings: dispatchSettings,
+    verification_targets: uniqueVerificationTargets(assignments, dispatchSettings),
+  };
+}
+
+function dispatchArgumentsMatch(actual, expected) {
+  if (!isPlainObject(actual)) {
+    return false;
+  }
+  const actualKeys = Object.keys(actual);
+  const expectedKeys = Object.keys(expected);
+  return actualKeys.length === expectedKeys.length
+    && expectedKeys.every(
+      (key) => Object.prototype.hasOwnProperty.call(actual, key)
+        && actual[key] === expected[key]
+    );
+}
+
 function buildResolvedProfile(request) {
-  const { assignments, verification_targets: verificationTargets } = verificationPlan(request);
+  const {
+    assignments,
+    dispatch_settings: dispatchSettings,
+    verification_targets: verificationTargets,
+  } = verificationPlan(request);
   if (!isPlainObject(request.probes)) {
     throw new Error('probes must be an object');
   }
-  for (const model of Object.keys(request.probes)) {
-    if (!verificationTargets.includes(model)) {
-      throw new Error(`unexpected probe for ${model}`);
+  const targetsById = new Map(
+    verificationTargets.map((target) => [target.id, target])
+  );
+  for (const targetId of Object.keys(request.probes)) {
+    if (!targetsById.has(targetId)) {
+      throw new Error(`unexpected probe for ${targetId}`);
     }
   }
 
-  const modelCheckEntries = [];
+  const modelChecks = new Map();
 
-  for (const model of verificationTargets) {
-    if (!Object.prototype.hasOwnProperty.call(request.probes, model)) {
-      throw new Error(`missing probe for ${model}`);
+  for (const target of verificationTargets) {
+    if (!Object.prototype.hasOwnProperty.call(request.probes, target.id)) {
+      throw new Error(`missing probe for ${target.id}`);
     }
-    const probe = request.probes[model];
+    const probe = request.probes[target.id];
     if (!isPlainObject(probe)) {
-      throw new Error(`missing probe for ${model}`);
+      throw new Error(`missing probe for ${target.id}`);
     }
-    if (probe.requested_model !== model) {
-      throw new Error(`probe requested model does not match ${model}`);
+    if (probe.requested_model !== target.model) {
+      throw new Error(`probe requested model does not match ${target.id}`);
+    }
+    if (!dispatchArgumentsMatch(probe.requested_arguments, target.dispatch_arguments)) {
+      throw new Error(
+        `probe requested arguments do not match dispatch arguments for ${target.id}`
+      );
     }
     if (probe.ok !== true) {
-      throw new Error(`probe failed for ${model}: ${probe.error || 'unknown failure'}`);
+      throw new Error(
+        `probe failed for ${target.id}: ${probe.error || 'unknown failure'}`
+      );
     }
     if (!isIsoTimestamp(probe.checked_at)) {
-      throw new Error(`valid ISO probe checked_at is required for ${model}`);
+      throw new Error(`valid ISO probe checked_at is required for ${target.id}`);
     }
     if (typeof probe.identity_observable !== 'boolean') {
-      throw new Error(`probe identity_observable is required for ${model}`);
+      throw new Error(`probe identity_observable is required for ${target.id}`);
     }
 
+    let modelCheck;
     if (probe.identity_observable) {
       if (
         typeof probe.executed_model !== 'string'
-        || probe.executed_model !== model
+        || probe.executed_model !== target.model
       ) {
         throw new Error(
-          `requested/executed model mismatch for ${model}: ${probe.executed_model}`
+          `requested/executed model mismatch for ${target.id}: ${probe.executed_model}`
         );
       }
-      modelCheckEntries.push([model, {
+      modelCheck = {
         status: 'verified',
         method: 'dispatch_smoke_test',
         source: 'harness',
         checked_at: probe.checked_at,
-      }]);
+      };
     } else {
       if (Object.prototype.hasOwnProperty.call(probe, 'executed_model')) {
-        throw new Error(`unobservable probe must not supply executed_model for ${model}`);
+        throw new Error(
+          `unobservable probe must not supply executed_model for ${target.id}`
+        );
       }
-      modelCheckEntries.push([model, {
+      modelCheck = {
         status: 'unverified',
         method: 'addressability_probe',
         source: 'harness',
         checked_at: probe.checked_at,
-      }]);
+      };
+    }
+
+    const priorCheck = modelChecks.get(target.model);
+    if (
+      priorCheck === undefined
+      || modelCheck.status === 'unverified'
+      || priorCheck.status === 'verified'
+    ) {
+      modelChecks.set(target.model, modelCheck);
     }
   }
 
   return {
     assignments,
-    model_checks: Object.fromEntries(modelCheckEntries),
+    dispatch_settings: dispatchSettings,
+    model_checks: Object.fromEntries(modelChecks),
   };
 }
 
@@ -384,6 +505,7 @@ module.exports = {
   matchingSignature,
   prepareCatalog,
   resolvedAssignments,
+  resolvedDispatchSettings,
   resolveModelIntent,
   uniqueModelIds,
   verificationPlan,
