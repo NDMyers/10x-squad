@@ -226,7 +226,7 @@ Document the CLI capability and the VS Code/unknown-harness hard stop. Update UI
 Run:
 
 ```bash
-python3 /Users/ndmyers/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   assets/skills/10x-squad-configure-tiers
 node --test test/configure-tiers-skill.test.js
 ```
@@ -307,7 +307,7 @@ Run:
 
 ```bash
 npm test
-python3 /Users/ndmyers/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   assets/skills/10x-squad-configure-tiers
 git diff --check HEAD~4
 ```
@@ -327,10 +327,10 @@ Give the reviewer the design, this plan, and the branch diff. Re-run the focused
 Run:
 
 ```bash
-node bin/10x-squad.js install --directory /Users/ndmyers/Accrualify
+node bin/10x-squad.js install --directory <workspace-root>
 ```
 
-Verify source and installed copies are byte-identical and that `/Users/ndmyers/Accrualify/.10x-squad/model-routing.json` is unchanged.
+Verify source and installed copies are byte-identical and that `<workspace-root>/.10x-squad/model-routing.json` is unchanged.
 
 **Step 6: Commit final review fixes, if any**
 

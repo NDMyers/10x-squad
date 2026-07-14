@@ -5,7 +5,7 @@
 **Status:** Implemented model-routing baseline; runtime-setting policy superseded by [Work-Tier Runtime Settings Design](2026-07-13-work-tier-runtime-settings-design.md)
 **Date:** 2026-07-13  
 **Decision owner:** Nick  
-**Target repository:** `/Users/ndmyers/Accrualify/10x-squad`
+**Target repository:** `<repo-root>`
 
 **Goal:** Replace the squad's hardcoded persona-by-model-tier guidance with a user-configured, exact model assignment for each of the five existing work-complexity tiers, managed through a new `10x-squad-configure-tiers` skill.
 
@@ -393,7 +393,7 @@ git commit -m "docs: verify explicit subagent model routing"
 **Step 1: Scaffold with the skill creator**
 
 ```bash
-python3 /Users/ndmyers/.codex/skills/.system/skill-creator/scripts/init_skill.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/init_skill.py \
   10x-squad-configure-tiers \
   --path assets/skills \
   --resources scripts,references \
@@ -505,7 +505,7 @@ Keep `SKILL.md` concise and put schema details in `references/config-format.md`.
 **Step 3: Validate the skill package**
 
 ```bash
-python3 /Users/ndmyers/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   assets/skills/10x-squad-configure-tiers
 node --test test/configure-tiers-skill.test.js
 ```
@@ -712,7 +712,7 @@ git commit -m "docs: adopt configurable work-tier model routing"
 
 ```bash
 npm test
-python3 /Users/ndmyers/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   assets/skills/10x-squad-configure-tiers
 ```
 

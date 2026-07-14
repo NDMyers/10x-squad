@@ -2,3 +2,9 @@ node_modules/
 .DS_Store
 .10x/
 .worktrees/
+
+# Eval harness run artifacts
+evals/results.csv
+evals/tasks/**/last-stderr.log
+evals/tasks/smoke-hello/workspace/*
+!evals/tasks/smoke-hello/workspace/.gitkeep

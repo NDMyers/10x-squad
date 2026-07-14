@@ -9,6 +9,8 @@ assets/skills/10x-*/                 seven skills, installed as complete package
 lib/installer.js                     asset manifest + recursive copy logic
 bin/10x-squad.js                     CLI: 10x-squad install [-d <dir>]
 test/                                node --test suites (npm test runs full discovery)
+evals/                               deployment parity check + headless eval harness
+docs/review/                         squad review, architecture, eval plan, learning notes
 ```
 
 ## Model routing
@@ -27,9 +29,9 @@ History: until 2026-07-12 it was the other way around — the live `.github/` co
 2. `npm test`
 3. Commit.
 4. Deploy: `node bin/10x-squad.js install --directory <workspace-root>` (re-running is idempotent; unrelated `.github` customizations are preserved).
-5. Verify parity: `~/.claude/10x-squad/evals/check-sync.sh` must report zero source↔live failures.
+5. Verify parity: `evals/check-sync.sh` must report zero SOURCE failures (assumes the repo is checked out inside the deploy workspace; otherwise set `SQUAD_ROOT`).
 6. Upstream to corpay-agents via normal PR when ready.
 
 ## Related
 
-Review, architecture diagrams, eval plan, and improvement ladder for the squad live in `~/.claude/10x-squad/` (start at README.md there). The Claude Code port regeneration (planned installer target) is step 4 on that ladder.
+Review, architecture diagrams, eval plan, and improvement ladder for the squad live in `docs/review/` (start at its README.md); the runnable eval harness is `evals/`. The Claude Code port regeneration (planned installer target) is step 4 on that ladder.
