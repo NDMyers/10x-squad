@@ -12,7 +12,7 @@ Three storage approaches were considered. Replacing each model string with a nes
 
 Schema v2 retains `assignments` as the exact five-tier model map and adds optional `dispatch_settings` with the same five canonical keys. Each stored tier setting contains exactly `reasoning_effort` and `context_tier`. New configure-skill proposals always write the complete map, including explicit `auto` values.
 
-The engine continues to read schema-v1 files. A missing `dispatch_settings` map resolves as `auto` for both settings on all tiers. Any successful profile write upgrades the file to schema v2 while preserving unrelated harness profiles without adding fields to them. Schema v1 rejects v2-only fields; schema v2 permits an omitted settings map solely for retained legacy harness profiles.
+The engine continues to read schema-v1 files. A missing `dispatch_settings` map resolves as `auto` for both settings on all tiers. Any successful profile write upgrades the file to schema v2 while preserving unrelated harness profiles without adding fields to them. Schema v1 rejects v2-only fields. Schema v2 accepts an omitted settings map for compatibility because stored provenance cannot be proven; every targeted configure upsert materializes the complete map, while an unrelated retained legacy profile may remain omitted.
 
 `resolve` remains additive and backward compatible: it keeps the existing `model` and `check_status` fields and adds `reasoning_effort` and `context_tier`. Preview and write results similarly retain the existing effective model map and add an effective settings map.
 

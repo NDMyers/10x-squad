@@ -61,7 +61,7 @@ Also test:
 - only `auto|low|medium|high|xhigh` and `auto|default|long_context` are valid;
 - unknown nested fields and credential-shaped fields fail;
 - schema v1 rejects `dispatch_settings`;
-- schema v2 may omit it for a retained legacy harness profile;
+- schema v2 accepts omission for compatibility, while targeted upserts materialize it and unrelated retained legacy profiles may remain omitted;
 - explicit settings fail validation for `copilot-vscode` and an unknown harness;
 - `upsertProfile` upgrades to v2 and preserves unrelated profile objects;
 - `diff-profile` and `upsert-profile` retain their existing fields and add `effective_dispatch_settings_after`.
