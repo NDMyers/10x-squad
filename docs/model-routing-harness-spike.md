@@ -109,7 +109,7 @@ Remaining forward checks require the VS Code chat UI:
 
 ## Step 6 — Global-config readability
 
-CLI: shell tools run as the invoking user; `~/.config/10x-squad/model-routing.json` is readable wherever `shell(node:*)` is permitted — will be confirmed empirically in Probe D. VS Code: not established by the catalog-discovery call; global-config readability remains a forward test (terminal tool availability in agent context).
+CLI: Probe D proved that an allowlisted Node command can run unattended; it did not separately read `~/.config/10x-squad/model-routing.json`, so direct readability of that file remains a forward check. VS Code: not established by the catalog-discovery call; global-config readability remains a forward test (terminal tool availability in agent context).
 
 ## Step 7 — Local/BYOK
 
