@@ -21,6 +21,7 @@ const {
   validateConfigShape,
   upsertProfile,
   removeProfile,
+  effectiveProfile,
   resolve,
   configPaths,
 } = engine;
@@ -43,6 +44,15 @@ function mkProfile(model, extra = {}) {
   return { assignments: mkAssignments(model), ...extra };
 }
 
+function defineOwn(obj, key, value) {
+  Object.defineProperty(obj, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function mkDispatchSettings(reasoningEffort = 'auto', contextTier = 'auto') {
   return Object.fromEntries(CANONICAL.map((tier) => [tier, {
     reasoning_effort: reasoningEffort,
@@ -53,7 +63,7 @@ function mkDispatchSettings(reasoningEffort = 'auto', contextTier = 'auto') {
 function mkConfig(harnessMap) {
   const harnesses = {};
   for (const [h, model] of Object.entries(harnessMap)) {
-    harnesses[h] = mkProfile(model);
+    defineOwn(harnesses, h, mkProfile(model));
   }
   return { schema_version: 1, updated_at: '2026-07-13T00:00:00.000Z', harnesses };
 }
@@ -209,6 +219,39 @@ test('schema v1 rejects dispatch settings while schema v2 permits legacy profile
   assert.equal(validateConfigShape(v2ExplicitUnsupported).ok, false);
 });
 
+test('inherited optional proposal fields are ignored and never persisted', () => {
+  const profile = mkProfile('m');
+  Object.setPrototypeOf(profile, {
+    dispatch_settings: mkDispatchSettings('high', 'long_context'),
+    model_checks: { m: { status: 'verified' } },
+  });
+
+  assert.equal(validateProfile(profile, { harness: 'copilot-vscode' }).ok, true);
+  const cfg = upsertProfile(null, 'copilot-vscode', profile, NOW);
+  const stored = cfg.harnesses['copilot-vscode'];
+  assert.deepEqual(stored.dispatch_settings, mkDispatchSettings());
+  assert.equal(Object.hasOwn(stored, 'model_checks'), false);
+});
+
+test('inherited optional stored fields read as omitted legacy data', () => {
+  const profile = mkProfile('m');
+  Object.setPrototypeOf(profile, {
+    dispatch_settings: mkDispatchSettings('high', 'long_context'),
+    model_checks: { m: { status: 'verified' } },
+  });
+  const cfg = {
+    schema_version: 1,
+    updated_at: NOW,
+    harnesses: { 'copilot-cli': profile },
+  };
+
+  assert.equal(validateConfigShape(cfg).ok, true);
+  const result = resolve({ workspaceConfig: cfg, globalConfig: null, harness: 'copilot-cli', tier: 'lite' });
+  assert.equal(result.reasoning_effort, 'auto');
+  assert.equal(result.context_tier, 'auto');
+  assert.equal(result.check_status, 'unverified');
+});
+
 test('per-tier mode requires exactly all five canonical keys', () => {
   const missing = mkProfile('m');
   delete missing.assignments.complex;
@@ -302,6 +345,26 @@ test('already-resolved opaque exact identifier is preserved byte-for-byte', () =
 // ---------------------------------------------------------------------------
 // Pure resolution: precedence, wholesale replacement, advisory metadata
 // ---------------------------------------------------------------------------
+
+test('effective profile ignores absent prototype-colliding harness names', () => {
+  const cfg = mkConfig({ 'copilot-cli': 'm' });
+  for (const harness of ['toString', 'constructor', '__proto__']) {
+    assert.equal(
+      effectiveProfile({ workspaceConfig: cfg, globalConfig: null, harness }),
+      null,
+      harness
+    );
+  }
+});
+
+test('prototype-colliding absent harness names resolve with HARNESS code 3', () => {
+  const cfg = mkConfig({ 'copilot-cli': 'm' });
+  for (const harness of ['toString', 'constructor', '__proto__']) {
+    const result = resolve({ workspaceConfig: cfg, globalConfig: null, harness, tier: 'lite' });
+    assert.equal(result.ok, false, harness);
+    assert.equal(result.code, 3, harness);
+  }
+});
 
 test('schema-v1 profiles resolve omitted runtime settings as auto', () => {
   const cfg = mkConfig({ 'copilot-cli': 'gpt-5.4' });
@@ -484,7 +547,16 @@ test('upsert materializes all-auto settings only on the targeted profile', () =>
 
   assert.deepEqual(after.harnesses['copilot-cli'].dispatch_settings, mkDispatchSettings());
   assert.equal(JSON.stringify(after.harnesses['copilot-vscode']), unrelatedBefore);
-  assert.equal('dispatch_settings' in after.harnesses['copilot-vscode'], false);
+  assert.equal(Object.hasOwn(after.harnesses['copilot-vscode'], 'dispatch_settings'), false);
+});
+
+test('upsert stores __proto__ as a literal own harness key', () => {
+  const cfg = upsertProfile(null, '__proto__', mkProfile('proto-m'), NOW);
+
+  assert.equal(Object.hasOwn(cfg.harnesses, '__proto__'), true);
+  assert.equal(cfg.harnesses.__proto__.assignments.lite, 'proto-m');
+  assert.equal(Object.getPrototypeOf(cfg.harnesses), Object.prototype);
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(cfg)).harnesses, '__proto__'), true);
 });
 
 test('upsert rejects explicit settings for an unsupported harness', () => {
@@ -495,21 +567,33 @@ test('upsert rejects explicit settings for an unsupported harness', () => {
   );
 });
 
-test('remove drops one harness and reports when the last profile is removed', () => {
+test('remove drops one harness, updates time, and reports when the last profile is removed', () => {
   const cfg = mkConfig({ a: 'm1', b: 'm2' });
-  const step1 = removeProfile(cfg, 'a');
+  const removedAt = '2026-07-13T03:00:00.000Z';
+  const step1 = removeProfile(cfg, 'a', removedAt);
   assert.equal(step1.removed, true);
   assert.ok(step1.config);
   assert.equal(step1.config.harnesses.a, undefined);
   assert.equal(JSON.stringify(step1.config.harnesses.b), JSON.stringify(cfg.harnesses.b));
   assert.equal(step1.config.schema_version, 2);
+  assert.equal(step1.config.updated_at, removedAt);
 
-  const step2 = removeProfile(step1.config, 'b');
+  const step2 = removeProfile(step1.config, 'b', '2026-07-13T04:00:00.000Z');
   assert.equal(step2.removed, true);
   assert.equal(step2.config, null); // caller deletes the file
 
-  const miss = removeProfile(cfg, 'nope');
+  const miss = removeProfile(cfg, 'nope', removedAt);
   assert.equal(miss.removed, false);
+  assert.equal(miss.config.updated_at, cfg.updated_at);
+});
+
+test('remove ignores inherited prototype-colliding harness names', () => {
+  const cfg = mkConfig({ 'copilot-cli': 'm' });
+  for (const harness of ['toString', 'constructor', '__proto__']) {
+    const result = removeProfile(cfg, harness, '2026-07-13T03:00:00.000Z');
+    assert.equal(result.removed, false, harness);
+    assert.deepEqual(result.config, cfg);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -627,6 +711,20 @@ test('resolve: exit 3 when the active harness profile is missing', () => {
   );
   assert.equal(r.code, 3);
   assert.match(r.stderr, /copilot-cli/);
+});
+
+test('resolve: absent prototype-colliding harness names exit 3', () => {
+  const sb = sandbox();
+  writeJson(sb.wsFile, mkConfig({ 'copilot-cli': 'm' }));
+
+  for (const harness of ['toString', 'constructor', '__proto__']) {
+    const r = runCli(
+      ['resolve', '--workspace-root', sb.root, '--harness', harness, '--tier', 'lite', '--json'],
+      { env: sb.env }
+    );
+    assert.equal(r.code, 3, `${harness}: ${r.stderr}`);
+    assert.equal(r.stdout.trim(), '', harness);
+  }
 });
 
 test('resolve: exit 4 on an invalid tier key', () => {
@@ -798,6 +896,30 @@ test('upsert-profile: global scope writes under XDG_CONFIG_HOME', () => {
   assert.deepEqual(cfg.harnesses['copilot-cli'].dispatch_settings, mkDispatchSettings());
 });
 
+test('upsert-profile: persists __proto__ as a literal own harness key', () => {
+  const sb = sandbox();
+  const proposal = path.join(sb.root, 'proposal.json');
+  writeJson(proposal, mkProfile('proto-m'));
+
+  let r = runCli(
+    ['upsert-profile', '--input', proposal, '--scope', 'workspace', '--workspace-root', sb.root, '--harness', '__proto__'],
+    { env: sb.env }
+  );
+  assert.equal(r.code, 0, r.stderr);
+
+  const cfg = JSON.parse(fs.readFileSync(sb.wsFile, 'utf8'));
+  assert.equal(Object.hasOwn(cfg.harnesses, '__proto__'), true);
+  assert.equal(cfg.harnesses.__proto__.assignments.complex, 'proto-m');
+  assert.equal(Object.getPrototypeOf(cfg.harnesses), Object.prototype);
+
+  r = runCli(
+    ['resolve', '--workspace-root', sb.root, '--harness', '__proto__', '--tier', 'complex', '--json'],
+    { env: sb.env }
+  );
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).model, 'proto-m');
+});
+
 test('diff-profile: previews stored and effective change without writing', () => {
   const sb = sandbox();
   writeJson(sb.globalFile, mkConfig({ 'copilot-cli': 'global-m' }));
@@ -867,8 +989,33 @@ test('remove-profile: keeps the file when other harness profiles remain', () => 
   assert.equal(r.code, 0, r.stderr);
   const cfg = JSON.parse(fs.readFileSync(sb.wsFile, 'utf8'));
   assert.equal(cfg.schema_version, 2);
+  assert.notEqual(cfg.updated_at, NOW);
+  assert.doesNotThrow(() => new Date(cfg.updated_at).toISOString());
   assert.equal(cfg.harnesses['copilot-cli'], undefined);
   assert.equal(cfg.harnesses['copilot-vscode'].assignments.lite, 'b');
+});
+
+test('remove-profile: inherited prototype-colliding harness names are not found', () => {
+  const sb = sandbox();
+
+  for (const harness of ['toString', 'constructor', '__proto__']) {
+    writeJson(sb.wsFile, mkConfig({ 'copilot-cli': 'm' }));
+    const beforeBytes = fs.readFileSync(sb.wsFile, 'utf8');
+
+    const dryRun = runCli(
+      ['remove-profile', '--scope', 'workspace', '--workspace-root', sb.root, '--harness', harness, '--dry-run'],
+      { env: sb.env }
+    );
+    assert.equal(dryRun.code, 0, `${harness}: ${dryRun.stderr}`);
+    assert.equal(JSON.parse(dryRun.stdout).found, false, harness);
+
+    const removal = runCli(
+      ['remove-profile', '--scope', 'workspace', '--workspace-root', sb.root, '--harness', harness],
+      { env: sb.env }
+    );
+    assert.equal(removal.code, 3, `${harness}: ${removal.stderr}`);
+    assert.equal(fs.readFileSync(sb.wsFile, 'utf8'), beforeBytes, harness);
+  }
 });
 
 test('already-resolved opaque exact identifier round-trips byte-for-byte through the CLI and resolves unverified', () => {

@@ -38,6 +38,27 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+function defineOwnDataProperty(target, key, value) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function hasOwnHarness(config, harness) {
+  return Boolean(
+    config
+    && isPlainObject(config.harnesses)
+    && Object.hasOwn(config.harnesses, harness)
+  );
+}
+
+function ownHarnessProfile(config, harness) {
+  return hasOwnHarness(config, harness) ? config.harnesses[harness] : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -105,7 +126,7 @@ function validateProfile(profile, { harness } = {}) {
     if (!PROFILE_FIELDS.has(field)) errors.push(fieldError('profile', field));
   }
 
-  const a = profile.assignments;
+  const a = Object.hasOwn(profile, 'assignments') ? profile.assignments : undefined;
   if (!isPlainObject(a)) {
     errors.push('assignments must be an object with exactly the five canonical tier keys');
   } else {
@@ -128,11 +149,11 @@ function validateProfile(profile, { harness } = {}) {
     }
   }
 
-  if ('dispatch_settings' in profile) {
+  if (Object.hasOwn(profile, 'dispatch_settings')) {
     errors.push(...validateDispatchSettings(profile.dispatch_settings, { harness }));
   }
 
-  if ('model_checks' in profile) {
+  if (Object.hasOwn(profile, 'model_checks')) {
     const mc = profile.model_checks;
     if (!isPlainObject(mc)) {
       errors.push('model_checks must be an object keyed by exact assignment value');
@@ -149,7 +170,7 @@ function validateProfile(profile, { harness } = {}) {
           errors.push(`model_checks[${JSON.stringify(key)}].status must be "verified" or "unverified"`);
         }
         for (const field of ['display_name', 'method', 'source', 'checked_at']) {
-          if (field in entry && typeof entry[field] !== 'string') {
+          if (Object.hasOwn(entry, field) && typeof entry[field] !== 'string') {
             errors.push(`model_checks[${JSON.stringify(key)}].${field} must be a string`);
           }
         }
@@ -188,7 +209,7 @@ function validateConfigShape(cfg) {
     for (const field of Object.keys(profile)) {
       if (!PROFILE_FIELDS.has(field)) errors.push(fieldError(`harnesses.${harness}`, field));
     }
-    const a = profile.assignments;
+    const a = Object.hasOwn(profile, 'assignments') ? profile.assignments : undefined;
     if (!isPlainObject(a)) {
       errors.push(`harnesses.${harness}.assignments must be an object`);
       continue;
@@ -202,7 +223,7 @@ function validateConfigShape(cfg) {
     for (const key of Object.keys(a)) {
       if (!TIER_KEYS.includes(key)) errors.push(`harnesses.${harness}.assignments: unknown tier key ${JSON.stringify(key)}`);
     }
-    if ('dispatch_settings' in profile) {
+    if (Object.hasOwn(profile, 'dispatch_settings')) {
       if (cfg.schema_version === 1) {
         errors.push(`harnesses.${harness}.dispatch_settings is not allowed in schema version 1`);
       } else {
@@ -212,7 +233,7 @@ function validateConfigShape(cfg) {
         }));
       }
     }
-    if ('model_checks' in profile && !isPlainObject(profile.model_checks)) {
+    if (Object.hasOwn(profile, 'model_checks') && !isPlainObject(profile.model_checks)) {
       errors.push(`harnesses.${harness}.model_checks must be an object`);
     }
   }
@@ -223,7 +244,12 @@ function validateConfigShape(cfg) {
 // it is well-formed; anything else reads as "unverified" without failing the
 // resolve. No time-based expiry — checked_at is informational.
 function usableCheckStatus(profile, model) {
-  const entry = profile && isPlainObject(profile.model_checks) ? profile.model_checks[model] : undefined;
+  const checks = profile
+    && Object.hasOwn(profile, 'model_checks')
+    && isPlainObject(profile.model_checks)
+    ? profile.model_checks
+    : undefined;
+  const entry = checks && Object.hasOwn(checks, model) ? checks[model] : undefined;
   if (!isPlainObject(entry)) return 'unverified';
   for (const field of Object.keys(entry)) {
     if (!CHECK_FIELDS.has(field)) return 'unverified';
@@ -236,9 +262,12 @@ function automaticDispatchSetting() {
 }
 
 function dispatchSettingFor(profile, tier) {
-  const setting = isPlainObject(profile) && isPlainObject(profile.dispatch_settings)
-    ? profile.dispatch_settings[tier]
+  const settings = isPlainObject(profile)
+    && Object.hasOwn(profile, 'dispatch_settings')
+    && isPlainObject(profile.dispatch_settings)
+    ? profile.dispatch_settings
     : undefined;
+  const setting = settings && Object.hasOwn(settings, tier) ? settings[tier] : undefined;
   return isPlainObject(setting)
     ? { reasoning_effort: setting.reasoning_effort, context_tier: setting.context_tier }
     : automaticDispatchSetting();
@@ -266,7 +295,11 @@ function normalizeProfile(profile) {
     assignments: { ...profile.assignments },
     dispatch_settings: effectiveDispatchSettings(profile),
   };
-  if (isPlainObject(profile.model_checks) && Object.keys(profile.model_checks).length > 0) {
+  if (
+    Object.hasOwn(profile, 'model_checks')
+    && isPlainObject(profile.model_checks)
+    && Object.keys(profile.model_checks).length > 0
+  ) {
     stored.model_checks = structuredClone(profile.model_checks);
   }
   return stored;
@@ -283,20 +316,21 @@ function upsertProfile(config, harness, profile, nowIso) {
     : { schema_version: SCHEMA_VERSION, updated_at: nowIso, harnesses: {} };
   base.schema_version = SCHEMA_VERSION;
   base.updated_at = nowIso;
-  base.harnesses[harness] = normalizeProfile(profile);
+  defineOwnDataProperty(base.harnesses, harness, normalizeProfile(profile));
   return base;
 }
 
-function removeProfile(config, harness) {
+function removeProfile(config, harness, nowIso = new Date().toISOString()) {
   const base = structuredClone(config);
-  if (!isPlainObject(base.harnesses) || !(harness in base.harnesses)) {
+  if (!isPlainObject(base.harnesses) || !Object.hasOwn(base.harnesses, harness)) {
     return { config: base, removed: false };
   }
   delete base.harnesses[harness];
-  base.schema_version = SCHEMA_VERSION;
   if (Object.keys(base.harnesses).length === 0) {
     return { config: null, removed: true }; // caller deletes the file, directory stays
   }
+  base.schema_version = SCHEMA_VERSION;
+  base.updated_at = nowIso;
   return { config: base, removed: true };
 }
 
@@ -305,13 +339,9 @@ function removeProfile(config, harness) {
 // ---------------------------------------------------------------------------
 
 function effectiveProfile({ workspaceConfig, globalConfig, harness }) {
-  const ws = workspaceConfig && isPlainObject(workspaceConfig.harnesses)
-    ? workspaceConfig.harnesses[harness]
-    : undefined;
+  const ws = ownHarnessProfile(workspaceConfig, harness);
   if (ws) return { scope: 'workspace', schema_version: workspaceConfig.schema_version, profile: ws };
-  const glob = globalConfig && isPlainObject(globalConfig.harnesses)
-    ? globalConfig.harnesses[harness]
-    : undefined;
+  const glob = ownHarnessProfile(globalConfig, harness);
   if (glob) return { scope: 'global', schema_version: globalConfig.schema_version, profile: glob };
   return null;
 }
@@ -502,6 +532,7 @@ function cmdDiffProfile(flags) {
   const globalCfg = paths.global !== target ? readOrFail(paths.global) : null;
 
   const after = upsertProfile(targetCfg, flags.harness, proposal, new Date().toISOString());
+  const afterProfile = ownHarnessProfile(after, flags.harness);
   const simulated = effectiveProfile({
     workspaceConfig: flags.scope === 'workspace' ? after : wsCfg,
     globalConfig: flags.scope === 'global' ? after : globalCfg,
@@ -512,8 +543,8 @@ function cmdDiffProfile(flags) {
     scope: flags.scope,
     harness: flags.harness,
     path: target,
-    stored_before: (targetCfg && targetCfg.harnesses[flags.harness]) || null,
-    stored_after: after.harnesses[flags.harness],
+    stored_before: ownHarnessProfile(targetCfg, flags.harness) || null,
+    stored_after: afterProfile,
     effective_after: simulated ? { ...simulated.profile.assignments } : null,
     effective_dispatch_settings_after: simulated ? effectiveDispatchSettings(simulated.profile) : null,
   });
@@ -530,6 +561,7 @@ function cmdUpsertProfile(flags) {
 
   const existing = readOrFail(target);
   const next = upsertProfile(existing, flags.harness, proposal, new Date().toISOString());
+  const nextProfile = ownHarnessProfile(next, flags.harness);
   try {
     atomicWriteJson(target, next);
   } catch (err) {
@@ -540,8 +572,8 @@ function cmdUpsertProfile(flags) {
     scope: flags.scope,
     harness: flags.harness,
     path: target,
-    effective_after: { ...next.harnesses[flags.harness].assignments },
-    effective_dispatch_settings_after: effectiveDispatchSettings(next.harnesses[flags.harness]),
+    effective_after: { ...nextProfile.assignments },
+    effective_dispatch_settings_after: effectiveDispatchSettings(nextProfile),
   });
   process.exit(EXIT.OK);
 }
@@ -554,7 +586,7 @@ function cmdRemoveProfile(flags) {
   const paths = configPaths({ workspaceRoot: flags['workspace-root'] });
   if (!paths.workspace) fail(EXIT.CONFIG, '--workspace-root is required for workspace scope.');
   const existing = readOrFail(paths.workspace);
-  const found = Boolean(existing && existing.harnesses[flags.harness]);
+  const found = hasOwnHarness(existing, flags.harness);
 
   if (flags['dry-run']) {
     const remaining = existing ? Object.keys(existing.harnesses).filter((h) => h !== flags.harness) : [];
@@ -572,7 +604,7 @@ function cmdRemoveProfile(flags) {
   if (!found) {
     fail(EXIT.HARNESS, `No workspace profile for harness ${JSON.stringify(flags.harness)} to remove.`);
   }
-  const { config: next } = removeProfile(existing, flags.harness);
+  const { config: next } = removeProfile(existing, flags.harness, new Date().toISOString());
   if (next === null) {
     try {
       fs.unlinkSync(paths.workspace); // .10x-squad directory is left intact
