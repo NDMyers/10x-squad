@@ -14,10 +14,15 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const READABLE_SCHEMA_VERSIONS = new Set([1, 2]);
 const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 const CONFIG_FIELDS = new Set(['schema_version', 'updated_at', 'harnesses']);
-const PROFILE_FIELDS = new Set(['assignments', 'model_checks']);
+const PROFILE_FIELDS = new Set(['assignments', 'dispatch_settings', 'model_checks']);
+const DISPATCH_SETTING_FIELDS = new Set(['reasoning_effort', 'context_tier']);
+const REASONING_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh']);
+const CONTEXT_TIERS = new Set(['auto', 'default', 'long_context']);
+const EXPLICIT_DISPATCH_HARNESSES = new Set(['copilot-cli']);
 const CHECK_FIELDS = new Set(['display_name', 'status', 'method', 'source', 'checked_at']);
 const CHECK_STATUSES = new Set(['verified', 'unverified']);
 const CREDENTIAL_FIELD = /^(api[_-]?key|token|secret|password|passphrase|authorization|bearer|credentials?)$/i;
@@ -47,10 +52,51 @@ function fieldError(where, field) {
   return `${where}: ${kind} ${JSON.stringify(field)} is not allowed`;
 }
 
-// Validates a single-harness proposal ({assignments, model_checks?}) with the
-// strict field allowlist. Values are opaque and never scanned for secret-like
-// text; only field NAMES are policed.
-function validateProfile(profile) {
+function validateDispatchSettings(dispatchSettings, { where = 'dispatch_settings', harness } = {}) {
+  const errors = [];
+  if (!isPlainObject(dispatchSettings)) {
+    return [`${where} must be an object with exactly the five canonical tier keys`];
+  }
+
+  let hasExplicitSetting = false;
+  for (const tier of TIER_KEYS) {
+    if (!Object.hasOwn(dispatchSettings, tier)) {
+      errors.push(`${where}: missing canonical tier key ${JSON.stringify(tier)}`);
+      continue;
+    }
+    const setting = dispatchSettings[tier];
+    if (!isPlainObject(setting)) {
+      errors.push(`${where}.${tier}: setting must be an object`);
+      continue;
+    }
+    for (const field of Object.keys(setting)) {
+      if (!DISPATCH_SETTING_FIELDS.has(field)) errors.push(fieldError(`${where}.${tier}`, field));
+    }
+    if (!Object.hasOwn(setting, 'reasoning_effort') || !REASONING_EFFORTS.has(setting.reasoning_effort)) {
+      errors.push(`${where}.${tier}.reasoning_effort must be one of ${[...REASONING_EFFORTS].join(', ')}`);
+    } else if (setting.reasoning_effort !== 'auto') {
+      hasExplicitSetting = true;
+    }
+    if (!Object.hasOwn(setting, 'context_tier') || !CONTEXT_TIERS.has(setting.context_tier)) {
+      errors.push(`${where}.${tier}.context_tier must be one of ${[...CONTEXT_TIERS].join(', ')}`);
+    } else if (setting.context_tier !== 'auto') {
+      hasExplicitSetting = true;
+    }
+  }
+  for (const key of Object.keys(dispatchSettings)) {
+    if (!TIER_KEYS.includes(key)) errors.push(fieldError(where, key));
+  }
+  if (hasExplicitSetting && !EXPLICIT_DISPATCH_HARNESSES.has(harness)) {
+    errors.push(`${where}: harness ${JSON.stringify(harness ?? 'unknown')} does not support explicit runtime settings`);
+  }
+  return errors;
+}
+
+// Validates a single-harness proposal
+// ({assignments, dispatch_settings?, model_checks?}) with the strict field
+// allowlist. Values are opaque and never scanned for secret-like text; only
+// field NAMES are policed.
+function validateProfile(profile, { harness } = {}) {
   const errors = [];
   if (!isPlainObject(profile)) {
     return { ok: false, errors: ['profile must be a JSON object'] };
@@ -64,7 +110,7 @@ function validateProfile(profile) {
     errors.push('assignments must be an object with exactly the five canonical tier keys');
   } else {
     for (const tier of TIER_KEYS) {
-      if (!(tier in a)) {
+      if (!Object.hasOwn(a, tier)) {
         errors.push(`assignments: missing canonical tier key ${JSON.stringify(tier)}`);
         continue;
       }
@@ -80,6 +126,10 @@ function validateProfile(profile) {
         errors.push(`assignments: unknown tier key ${JSON.stringify(key)}; canonical keys are ${TIER_KEYS.join(', ')}`);
       }
     }
+  }
+
+  if ('dispatch_settings' in profile) {
+    errors.push(...validateDispatchSettings(profile.dispatch_settings, { harness }));
   }
 
   if ('model_checks' in profile) {
@@ -120,8 +170,8 @@ function validateConfigShape(cfg) {
   for (const field of Object.keys(cfg)) {
     if (!CONFIG_FIELDS.has(field)) errors.push(fieldError('config', field));
   }
-  if (cfg.schema_version !== SCHEMA_VERSION) {
-    errors.push(`schema_version must be exactly ${SCHEMA_VERSION}, got ${JSON.stringify(cfg.schema_version)}`);
+  if (!READABLE_SCHEMA_VERSIONS.has(cfg.schema_version)) {
+    errors.push(`schema_version must be one of ${[...READABLE_SCHEMA_VERSIONS].join(', ')}, got ${JSON.stringify(cfg.schema_version)}`);
   }
   if (typeof cfg.updated_at !== 'string') {
     errors.push('updated_at must be an ISO timestamp string');
@@ -145,12 +195,22 @@ function validateConfigShape(cfg) {
     }
     for (const tier of TIER_KEYS) {
       const v = a[tier];
-      if (typeof v !== 'string' || v.trim() === '' || isForbiddenAssignment(v)) {
+      if (!Object.hasOwn(a, tier) || typeof v !== 'string' || v.trim() === '' || isForbiddenAssignment(v)) {
         errors.push(`harnesses.${harness}.assignments.${tier}: missing or invalid exact model identifier`);
       }
     }
     for (const key of Object.keys(a)) {
       if (!TIER_KEYS.includes(key)) errors.push(`harnesses.${harness}.assignments: unknown tier key ${JSON.stringify(key)}`);
+    }
+    if ('dispatch_settings' in profile) {
+      if (cfg.schema_version === 1) {
+        errors.push(`harnesses.${harness}.dispatch_settings is not allowed in schema version 1`);
+      } else {
+        errors.push(...validateDispatchSettings(profile.dispatch_settings, {
+          where: `harnesses.${harness}.dispatch_settings`,
+          harness,
+        }));
+      }
     }
     if ('model_checks' in profile && !isPlainObject(profile.model_checks)) {
       errors.push(`harnesses.${harness}.model_checks must be an object`);
@@ -171,6 +231,23 @@ function usableCheckStatus(profile, model) {
   return CHECK_STATUSES.has(entry.status) ? entry.status : 'unverified';
 }
 
+function automaticDispatchSetting() {
+  return { reasoning_effort: 'auto', context_tier: 'auto' };
+}
+
+function dispatchSettingFor(profile, tier) {
+  const setting = isPlainObject(profile) && isPlainObject(profile.dispatch_settings)
+    ? profile.dispatch_settings[tier]
+    : undefined;
+  return isPlainObject(setting)
+    ? { reasoning_effort: setting.reasoning_effort, context_tier: setting.context_tier }
+    : automaticDispatchSetting();
+}
+
+function effectiveDispatchSettings(profile) {
+  return Object.fromEntries(TIER_KEYS.map((tier) => [tier, dispatchSettingFor(profile, tier)]));
+}
+
 // ---------------------------------------------------------------------------
 // Expansion, mutation
 // ---------------------------------------------------------------------------
@@ -185,7 +262,10 @@ function expandDefaultAll(modelId) {
 }
 
 function normalizeProfile(profile) {
-  const stored = { assignments: { ...profile.assignments } };
+  const stored = {
+    assignments: { ...profile.assignments },
+    dispatch_settings: effectiveDispatchSettings(profile),
+  };
   if (isPlainObject(profile.model_checks) && Object.keys(profile.model_checks).length > 0) {
     stored.model_checks = structuredClone(profile.model_checks);
   }
@@ -196,7 +276,7 @@ function upsertProfile(config, harness, profile, nowIso) {
   if (typeof harness !== 'string' || harness.trim() === '') {
     throw new Error('harness must be a non-empty surface key');
   }
-  const check = validateProfile(profile);
+  const check = validateProfile(profile, { harness });
   if (!check.ok) throw new Error(`invalid profile: ${check.errors.join('; ')}`);
   const base = config
     ? structuredClone(config)
@@ -213,6 +293,7 @@ function removeProfile(config, harness) {
     return { config: base, removed: false };
   }
   delete base.harnesses[harness];
+  base.schema_version = SCHEMA_VERSION;
   if (Object.keys(base.harnesses).length === 0) {
     return { config: null, removed: true }; // caller deletes the file, directory stays
   }
@@ -227,11 +308,11 @@ function effectiveProfile({ workspaceConfig, globalConfig, harness }) {
   const ws = workspaceConfig && isPlainObject(workspaceConfig.harnesses)
     ? workspaceConfig.harnesses[harness]
     : undefined;
-  if (ws) return { scope: 'workspace', profile: ws };
+  if (ws) return { scope: 'workspace', schema_version: workspaceConfig.schema_version, profile: ws };
   const glob = globalConfig && isPlainObject(globalConfig.harnesses)
     ? globalConfig.harnesses[harness]
     : undefined;
-  if (glob) return { scope: 'global', profile: glob };
+  if (glob) return { scope: 'global', schema_version: globalConfig.schema_version, profile: glob };
   return null;
 }
 
@@ -259,14 +340,16 @@ function resolve({ workspaceConfig, globalConfig, harness, tier }) {
     };
   }
   const model = hit.profile.assignments[tier];
+  const dispatchSetting = dispatchSettingFor(hit.profile, tier);
   return {
     ok: true,
-    schema_version: SCHEMA_VERSION,
+    schema_version: hit.schema_version,
     scope: hit.scope,
     harness,
     tier,
     model,
     check_status: usableCheckStatus(hit.profile, model),
+    ...dispatchSetting,
   };
 }
 
@@ -400,7 +483,7 @@ function scopeFile(flags, paths) {
 function cmdValidateProfile(flags) {
   require_(flags, ['input', 'harness']);
   const proposal = readProposal(flags.input);
-  const res = validateProfile(proposal);
+  const res = validateProfile(proposal, { harness: flags.harness });
   if (!res.ok) fail(EXIT.CONFIG, `Invalid profile for ${flags.harness}: ${res.errors.join('; ')}`);
   emit({ ok: true, harness: flags.harness });
   process.exit(EXIT.OK);
@@ -411,7 +494,7 @@ function cmdDiffProfile(flags) {
   const paths = configPaths({ workspaceRoot: flags['workspace-root'] });
   const target = scopeFile(flags, paths);
   const proposal = readProposal(flags.input);
-  const check = validateProfile(proposal);
+  const check = validateProfile(proposal, { harness: flags.harness });
   if (!check.ok) fail(EXIT.CONFIG, `Invalid profile for ${flags.harness}: ${check.errors.join('; ')}`);
 
   const targetCfg = readOrFail(target);
@@ -432,6 +515,7 @@ function cmdDiffProfile(flags) {
     stored_before: (targetCfg && targetCfg.harnesses[flags.harness]) || null,
     stored_after: after.harnesses[flags.harness],
     effective_after: simulated ? { ...simulated.profile.assignments } : null,
+    effective_dispatch_settings_after: simulated ? effectiveDispatchSettings(simulated.profile) : null,
   });
   process.exit(EXIT.OK);
 }
@@ -441,7 +525,7 @@ function cmdUpsertProfile(flags) {
   const paths = configPaths({ workspaceRoot: flags['workspace-root'] });
   const target = scopeFile(flags, paths);
   const proposal = readProposal(flags.input);
-  const check = validateProfile(proposal);
+  const check = validateProfile(proposal, { harness: flags.harness });
   if (!check.ok) fail(EXIT.CONFIG, `Invalid profile for ${flags.harness}: ${check.errors.join('; ')}`);
 
   const existing = readOrFail(target);
@@ -457,6 +541,7 @@ function cmdUpsertProfile(flags) {
     harness: flags.harness,
     path: target,
     effective_after: { ...next.harnesses[flags.harness].assignments },
+    effective_dispatch_settings_after: effectiveDispatchSettings(next.harnesses[flags.harness]),
   });
   process.exit(EXIT.OK);
 }
@@ -464,7 +549,7 @@ function cmdUpsertProfile(flags) {
 function cmdRemoveProfile(flags) {
   require_(flags, ['scope', 'harness']);
   if (flags.scope !== 'workspace') {
-    fail(EXIT.CONFIG, 'remove-profile supports --scope workspace only in schema v1.');
+    fail(EXIT.CONFIG, 'remove-profile supports --scope workspace only.');
   }
   const paths = configPaths({ workspaceRoot: flags['workspace-root'] });
   if (!paths.workspace) fail(EXIT.CONFIG, '--workspace-root is required for workspace scope.');

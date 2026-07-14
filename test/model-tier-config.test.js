@@ -26,6 +26,8 @@ const {
 } = engine;
 
 const CANONICAL = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
+const NOW = '2026-07-13T00:00:00.000Z';
+const AUTO_SETTINGS = { reasoning_effort: 'auto', context_tier: 'auto' };
 
 function tmpdir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -39,6 +41,13 @@ function mkAssignments(model) {
 
 function mkProfile(model, extra = {}) {
   return { assignments: mkAssignments(model), ...extra };
+}
+
+function mkDispatchSettings(reasoningEffort = 'auto', contextTier = 'auto') {
+  return Object.fromEntries(CANONICAL.map((tier) => [tier, {
+    reasoning_effort: reasoningEffort,
+    context_tier: contextTier,
+  }]));
 }
 
 function mkConfig(harnessMap) {
@@ -77,9 +86,20 @@ function sandbox() {
 // Constants and default-all expansion
 // ---------------------------------------------------------------------------
 
-test('canonical tier keys and schema version', () => {
+test('canonical tier keys and latest schema version', () => {
   assert.deepEqual(TIER_KEYS, CANONICAL);
-  assert.equal(SCHEMA_VERSION, 1);
+  assert.equal(SCHEMA_VERSION, 2);
+});
+
+test('stored schema versions 1 and 2 are readable while other versions are rejected', () => {
+  const v1 = mkConfig({ 'copilot-cli': 'm' });
+  const v2 = { ...structuredClone(v1), schema_version: 2 };
+  assert.equal(validateConfigShape(v1).ok, true);
+  assert.equal(validateConfigShape(v2).ok, true);
+
+  for (const version of [0, 3, '2', null]) {
+    assert.equal(validateConfigShape({ ...structuredClone(v1), schema_version: version }).ok, false);
+  }
 });
 
 test('default-all expansion produces exactly five explicit assignments', () => {
@@ -99,6 +119,96 @@ test('valid complete profile passes', () => {
   assert.equal(r.ok, true, JSON.stringify(r.errors || []));
 });
 
+test('dispatch settings require exactly the five canonical tier keys', () => {
+  const complete = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+  assert.equal(validateProfile(complete, { harness: 'copilot-cli' }).ok, true);
+
+  const missing = structuredClone(complete);
+  delete missing.dispatch_settings.complex;
+  assert.equal(validateProfile(missing, { harness: 'copilot-cli' }).ok, false);
+
+  const unknown = structuredClone(complete);
+  unknown.dispatch_settings.standard = { ...AUTO_SETTINGS };
+  assert.equal(validateProfile(unknown, { harness: 'copilot-cli' }).ok, false);
+});
+
+test('dispatch setting entries contain exactly reasoning_effort and context_tier', () => {
+  for (const field of ['reasoning_effort', 'context_tier']) {
+    const missing = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+    delete missing.dispatch_settings.lite[field];
+    assert.equal(validateProfile(missing, { harness: 'copilot-cli' }).ok, false, `missing ${field}`);
+  }
+
+  const unknown = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+  unknown.dispatch_settings.lite.temperature = 'auto';
+  assert.equal(validateProfile(unknown, { harness: 'copilot-cli' }).ok, false);
+
+  const inherited = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+  inherited.dispatch_settings.lite = Object.create(AUTO_SETTINGS);
+  assert.equal(validateProfile(inherited, { harness: 'copilot-cli' }).ok, false);
+});
+
+test('dispatch settings accept only canonical reasoning and context values', () => {
+  for (const reasoningEffort of ['auto', 'low', 'medium', 'high', 'xhigh']) {
+    const p = mkProfile('m', { dispatch_settings: mkDispatchSettings(reasoningEffort, 'auto') });
+    assert.equal(validateProfile(p, { harness: 'copilot-cli' }).ok, true, reasoningEffort);
+  }
+  for (const contextTier of ['auto', 'default', 'long_context']) {
+    const p = mkProfile('m', { dispatch_settings: mkDispatchSettings('auto', contextTier) });
+    assert.equal(validateProfile(p, { harness: 'copilot-cli' }).ok, true, contextTier);
+  }
+
+  for (const bad of ['Auto', 'inherit', '', null, 42, {}, []]) {
+    const reasoning = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+    reasoning.dispatch_settings.lite.reasoning_effort = bad;
+    assert.equal(validateProfile(reasoning, { harness: 'copilot-cli' }).ok, false, `reasoning ${JSON.stringify(bad)}`);
+
+    const context = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+    context.dispatch_settings.lite.context_tier = bad;
+    assert.equal(validateProfile(context, { harness: 'copilot-cli' }).ok, false, `context ${JSON.stringify(bad)}`);
+  }
+});
+
+test('dispatch settings reject unknown and credential-shaped nested fields', () => {
+  const unknown = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+  unknown.dispatch_settings.standard_clear.temperature = 'low';
+  const unknownResult = validateProfile(unknown, { harness: 'copilot-cli' });
+  assert.equal(unknownResult.ok, false);
+  assert.match(unknownResult.errors.join('; '), /unknown field/);
+
+  for (const field of ['api_key', 'apiKey', 'token', 'secret', 'password', 'authorization']) {
+    const p = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+    p.dispatch_settings.standard_clear[field] = 'x';
+    const result = validateProfile(p, { harness: 'copilot-cli' });
+    assert.equal(result.ok, false, `field ${field}`);
+    assert.match(result.errors.join('; '), /credential-shaped field/);
+  }
+});
+
+test('only copilot-cli supports explicit dispatch settings', () => {
+  const explicit = mkProfile('m', { dispatch_settings: mkDispatchSettings('medium', 'long_context') });
+  assert.equal(validateProfile(explicit, { harness: 'copilot-cli' }).ok, true);
+  assert.equal(validateProfile(explicit, { harness: 'copilot-vscode' }).ok, false);
+  assert.equal(validateProfile(explicit, { harness: 'unknown-surface' }).ok, false);
+
+  const automatic = mkProfile('m', { dispatch_settings: mkDispatchSettings() });
+  assert.equal(validateProfile(automatic, { harness: 'copilot-vscode' }).ok, true);
+  assert.equal(validateProfile(automatic, { harness: 'unknown-surface' }).ok, true);
+});
+
+test('schema v1 rejects dispatch settings while schema v2 permits legacy profiles without them', () => {
+  const v1 = mkConfig({ 'copilot-cli': 'm' });
+  v1.harnesses['copilot-cli'].dispatch_settings = mkDispatchSettings();
+  assert.equal(validateConfigShape(v1).ok, false);
+
+  const v2Legacy = { ...mkConfig({ 'copilot-vscode': 'm' }), schema_version: 2 };
+  assert.equal(validateConfigShape(v2Legacy).ok, true);
+
+  const v2ExplicitUnsupported = structuredClone(v2Legacy);
+  v2ExplicitUnsupported.harnesses['copilot-vscode'].dispatch_settings = mkDispatchSettings('high', 'default');
+  assert.equal(validateConfigShape(v2ExplicitUnsupported).ok, false);
+});
+
 test('per-tier mode requires exactly all five canonical keys', () => {
   const missing = mkProfile('m');
   delete missing.assignments.complex;
@@ -107,6 +217,17 @@ test('per-tier mode requires exactly all five canonical keys', () => {
   const unknown = mkProfile('m');
   unknown.assignments.standard = 'm'; // old 4-tier vocabulary is not a canonical key
   assert.equal(validateProfile(unknown, { harness: 'h' }).ok, false);
+});
+
+test('proposal assignment maps require own canonical tier keys', () => {
+  const inherited = { assignments: Object.create(mkAssignments('m')) };
+  assert.equal(validateProfile(inherited, { harness: 'copilot-cli' }).ok, false);
+});
+
+test('stored assignment maps require own canonical tier keys', () => {
+  const cfg = mkConfig({ 'copilot-cli': 'm' });
+  cfg.harnesses['copilot-cli'].assignments = Object.create(mkAssignments('m'));
+  assert.equal(validateConfigShape(cfg).ok, false);
 });
 
 test('auto, inherit, blank, null, and non-string assignments are invalid', () => {
@@ -181,6 +302,62 @@ test('already-resolved opaque exact identifier is preserved byte-for-byte', () =
 // ---------------------------------------------------------------------------
 // Pure resolution: precedence, wholesale replacement, advisory metadata
 // ---------------------------------------------------------------------------
+
+test('schema-v1 profiles resolve omitted runtime settings as auto', () => {
+  const cfg = mkConfig({ 'copilot-cli': 'gpt-5.4' });
+  const result = resolve({
+    workspaceConfig: cfg,
+    globalConfig: null,
+    harness: 'copilot-cli',
+    tier: 'complex',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.schema_version, 1);
+  assert.deepEqual(
+    { reasoning_effort: result.reasoning_effort, context_tier: result.context_tier },
+    AUTO_SETTINGS
+  );
+});
+
+test('schema-v2 profiles resolve explicit per-tier runtime settings', () => {
+  const profile = mkProfile('gpt-5.4', {
+    dispatch_settings: mkDispatchSettings('medium', 'long_context'),
+  });
+  profile.dispatch_settings.standard_clear = { reasoning_effort: 'xhigh', context_tier: 'default' };
+  const cfg = {
+    schema_version: 2,
+    updated_at: NOW,
+    harnesses: { 'copilot-cli': profile },
+  };
+  assert.equal(validateConfigShape(cfg).ok, true);
+
+  const result = resolve({
+    workspaceConfig: cfg,
+    globalConfig: null,
+    harness: 'copilot-cli',
+    tier: 'standard_clear',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.schema_version, 2);
+  assert.equal(result.model, 'gpt-5.4');
+  assert.equal(result.reasoning_effort, 'xhigh');
+  assert.equal(result.context_tier, 'default');
+});
+
+test('resolve reports the schema version of the selected config scope', () => {
+  const workspace = mkConfig({ 'copilot-vscode': 'workspace-vs' });
+  const global = { ...mkConfig({ 'copilot-cli': 'global-cli' }), schema_version: 2 };
+
+  const result = resolve({
+    workspaceConfig: workspace,
+    globalConfig: global,
+    harness: 'copilot-cli',
+    tier: 'lite',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.scope, 'global');
+  assert.equal(result.schema_version, 2);
+});
 
 test('workspace profile replaces the matching global harness profile wholesale', () => {
   const ws = mkConfig({ 'copilot-cli': 'ws-model' });
@@ -276,21 +453,46 @@ test('verified status is honored with no time-based expiry', () => {
 test('upsert preserves every unrelated harness profile at the data level', () => {
   const before = mkConfig({ 'copilot-vscode': 'vs-m', other: 'o-m' });
   const frozen = JSON.stringify(before.harnesses['copilot-vscode']) + JSON.stringify(before.harnesses.other);
-  const after = upsertProfile(before, 'copilot-cli', mkProfile('cli-m'), '2026-07-13T02:00:00.000Z');
+  const proposal = mkProfile('cli-m', { dispatch_settings: mkDispatchSettings('medium', 'long_context') });
+  const after = upsertProfile(before, 'copilot-cli', proposal, '2026-07-13T02:00:00.000Z');
   assert.equal(
     JSON.stringify(after.harnesses['copilot-vscode']) + JSON.stringify(after.harnesses.other),
     frozen
   );
   assert.equal(after.harnesses['copilot-cli'].assignments.lite, 'cli-m');
+  assert.deepEqual(after.harnesses['copilot-cli'].dispatch_settings.lite, {
+    reasoning_effort: 'medium',
+    context_tier: 'long_context',
+  });
+  assert.equal(after.schema_version, 2);
   assert.equal(after.updated_at, '2026-07-13T02:00:00.000Z');
   // Input object is not mutated.
   assert.equal(before.harnesses['copilot-cli'], undefined);
+  assert.equal(before.schema_version, 1);
 });
 
 test('upsert rejects an invalid proposal without producing a config', () => {
   const bad = mkProfile('m');
   bad.assignments.lite = 'auto';
   assert.throws(() => upsertProfile(null, 'copilot-cli', bad, '2026-07-13T02:00:00.000Z'));
+});
+
+test('upsert materializes all-auto settings only on the targeted profile', () => {
+  const before = mkConfig({ 'copilot-vscode': 'vs-m' });
+  const unrelatedBefore = JSON.stringify(before.harnesses['copilot-vscode']);
+  const after = upsertProfile(before, 'copilot-cli', mkProfile('cli-m'), '2026-07-13T02:00:00.000Z');
+
+  assert.deepEqual(after.harnesses['copilot-cli'].dispatch_settings, mkDispatchSettings());
+  assert.equal(JSON.stringify(after.harnesses['copilot-vscode']), unrelatedBefore);
+  assert.equal('dispatch_settings' in after.harnesses['copilot-vscode'], false);
+});
+
+test('upsert rejects explicit settings for an unsupported harness', () => {
+  const explicit = mkProfile('m', { dispatch_settings: mkDispatchSettings('high', 'default') });
+  assert.throws(
+    () => upsertProfile(null, 'copilot-vscode', explicit, '2026-07-13T02:00:00.000Z'),
+    /copilot-vscode/
+  );
 });
 
 test('remove drops one harness and reports when the last profile is removed', () => {
@@ -300,6 +502,7 @@ test('remove drops one harness and reports when the last profile is removed', ()
   assert.ok(step1.config);
   assert.equal(step1.config.harnesses.a, undefined);
   assert.equal(JSON.stringify(step1.config.harnesses.b), JSON.stringify(cfg.harnesses.b));
+  assert.equal(step1.config.schema_version, 2);
 
   const step2 = removeProfile(step1.config, 'b');
   assert.equal(step2.removed, true);
@@ -345,7 +548,34 @@ test('resolve: success prints exactly one JSON object on stdout and exits 0', ()
     tier: 'standard_clear',
     model: 'surface-native-model-id',
     check_status: 'unverified',
+    reasoning_effort: 'auto',
+    context_tier: 'auto',
   });
+});
+
+test('resolve: schema-v2 explicit runtime settings are additive JSON fields', () => {
+  const sb = sandbox();
+  const cfg = {
+    schema_version: 2,
+    updated_at: NOW,
+    harnesses: {
+      'copilot-cli': mkProfile('gpt-5.4', {
+        dispatch_settings: mkDispatchSettings('high', 'long_context'),
+      }),
+    },
+  };
+  writeJson(sb.wsFile, cfg);
+
+  const r = runCli(
+    ['resolve', '--workspace-root', sb.root, '--harness', 'copilot-cli', '--tier', 'complex', '--json'],
+    { env: sb.env }
+  );
+  assert.equal(r.code, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.model, 'gpt-5.4');
+  assert.equal(out.check_status, 'unverified');
+  assert.equal(out.reasoning_effort, 'high');
+  assert.equal(out.context_tier, 'long_context');
 });
 
 test('resolve: exit 2 when configuration is missing everywhere', () => {
@@ -379,7 +609,7 @@ test('resolve: exit 2 when configuration is corrupt or incomplete', () => {
   assert.equal(r.code, 2);
 
   const badVersion = mkConfig({ 'copilot-cli': 'm' });
-  badVersion.schema_version = 2;
+  badVersion.schema_version = 3;
   writeJson(sb.wsFile, badVersion);
   r = runCli(
     ['resolve', '--workspace-root', sb.root, '--harness', 'copilot-cli', '--tier', 'lite', '--json'],
@@ -445,15 +675,28 @@ test('validate-profile: valid input exits 0, invalid exits 2', () => {
   const sb = sandbox();
   const good = path.join(sb.root, 'good.json');
   const bad = path.join(sb.root, 'bad.json');
+  const explicit = path.join(sb.root, 'explicit.json');
   writeJson(good, mkProfile('m'));
   const badProfile = mkProfile('m');
   badProfile.assignments.lite = 'inherit';
   writeJson(bad, badProfile);
+  writeJson(explicit, mkProfile('m', { dispatch_settings: mkDispatchSettings('medium', 'default') }));
 
   assert.equal(runCli(['validate-profile', '--input', good, '--harness', 'copilot-cli'], { env: sb.env }).code, 0);
   const r = runCli(['validate-profile', '--input', bad, '--harness', 'copilot-cli'], { env: sb.env });
   assert.equal(r.code, 2);
   assert.match(r.stderr, /inherit/);
+
+  assert.equal(
+    runCli(['validate-profile', '--input', explicit, '--harness', 'copilot-cli'], { env: sb.env }).code,
+    0
+  );
+  const unsupported = runCli(
+    ['validate-profile', '--input', explicit, '--harness', 'copilot-vscode'],
+    { env: sb.env }
+  );
+  assert.equal(unsupported.code, 2);
+  assert.match(unsupported.stderr, /copilot-vscode/);
 });
 
 test('upsert-profile: writes atomically, preserves unrelated profiles byte-for-byte at data level', () => {
@@ -462,17 +705,30 @@ test('upsert-profile: writes atomically, preserves unrelated profiles byte-for-b
   const beforeVs = JSON.stringify(JSON.parse(fs.readFileSync(sb.wsFile, 'utf8')).harnesses['copilot-vscode']);
 
   const proposal = path.join(sb.root, 'proposal.json');
-  writeJson(proposal, mkProfile('cli-m'));
+  writeJson(proposal, mkProfile('cli-m', {
+    dispatch_settings: mkDispatchSettings('medium', 'long_context'),
+  }));
   const r = runCli(
     ['upsert-profile', '--input', proposal, '--scope', 'workspace', '--workspace-root', sb.root, '--harness', 'copilot-cli'],
     { env: sb.env }
   );
   assert.equal(r.code, 0, r.stderr);
 
+  const output = JSON.parse(r.stdout);
+  assert.equal(output.effective_after.lite, 'cli-m');
+  assert.deepEqual(output.effective_dispatch_settings_after.lite, {
+    reasoning_effort: 'medium',
+    context_tier: 'long_context',
+  });
+
   const after = JSON.parse(fs.readFileSync(sb.wsFile, 'utf8'));
   assert.equal(JSON.stringify(after.harnesses['copilot-vscode']), beforeVs);
   assert.equal(after.harnesses['copilot-cli'].assignments.trivial, 'cli-m');
-  assert.equal(after.schema_version, 1);
+  assert.deepEqual(after.harnesses['copilot-cli'].dispatch_settings.trivial, {
+    reasoning_effort: 'medium',
+    context_tier: 'long_context',
+  });
+  assert.equal(after.schema_version, 2);
   // No temp files left behind.
   const leftovers = fs.readdirSync(path.dirname(sb.wsFile)).filter((f) => f !== 'model-routing.json');
   assert.deepEqual(leftovers, []);
@@ -512,6 +768,22 @@ test('upsert-profile: decorated auto exits 2 and leaves the prior file byte-for-
   assert.equal(fs.readFileSync(sb.wsFile, 'utf8'), beforeBytes);
 });
 
+test('upsert-profile: unsupported explicit settings exit 2 and leave the prior file unchanged', () => {
+  const sb = sandbox();
+  writeJson(sb.wsFile, mkConfig({ 'copilot-vscode': 'keep-me' }));
+  const beforeBytes = fs.readFileSync(sb.wsFile, 'utf8');
+
+  const proposal = path.join(sb.root, 'proposal.json');
+  writeJson(proposal, mkProfile('m', { dispatch_settings: mkDispatchSettings('medium', 'default') }));
+  const r = runCli(
+    ['upsert-profile', '--input', proposal, '--scope', 'workspace', '--workspace-root', sb.root, '--harness', 'copilot-vscode'],
+    { env: sb.env }
+  );
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /copilot-vscode/);
+  assert.equal(fs.readFileSync(sb.wsFile, 'utf8'), beforeBytes);
+});
+
 test('upsert-profile: global scope writes under XDG_CONFIG_HOME', () => {
   const sb = sandbox();
   const proposal = path.join(sb.root, 'proposal.json');
@@ -523,13 +795,16 @@ test('upsert-profile: global scope writes under XDG_CONFIG_HOME', () => {
   assert.equal(r.code, 0, r.stderr);
   const cfg = JSON.parse(fs.readFileSync(sb.globalFile, 'utf8'));
   assert.equal(cfg.harnesses['copilot-cli'].assignments.complex, 'gm');
+  assert.deepEqual(cfg.harnesses['copilot-cli'].dispatch_settings, mkDispatchSettings());
 });
 
 test('diff-profile: previews stored and effective change without writing', () => {
   const sb = sandbox();
   writeJson(sb.globalFile, mkConfig({ 'copilot-cli': 'global-m' }));
   const proposal = path.join(sb.root, 'proposal.json');
-  writeJson(proposal, mkProfile('new-m'));
+  writeJson(proposal, mkProfile('new-m', {
+    dispatch_settings: mkDispatchSettings('xhigh', 'long_context'),
+  }));
 
   const r = runCli(
     ['diff-profile', '--input', proposal, '--scope', 'workspace', '--workspace-root', sb.root, '--harness', 'copilot-cli'],
@@ -541,6 +816,10 @@ test('diff-profile: previews stored and effective change without writing', () =>
   assert.equal(out.stored_before, null); // no workspace file yet
   assert.equal(out.stored_after.assignments.lite, 'new-m');
   assert.equal(out.effective_after.lite, 'new-m');
+  assert.deepEqual(out.effective_dispatch_settings_after.lite, {
+    reasoning_effort: 'xhigh',
+    context_tier: 'long_context',
+  });
   assert.equal(fs.existsSync(sb.wsFile), false); // nothing written
 });
 
@@ -587,6 +866,7 @@ test('remove-profile: keeps the file when other harness profiles remain', () => 
   );
   assert.equal(r.code, 0, r.stderr);
   const cfg = JSON.parse(fs.readFileSync(sb.wsFile, 'utf8'));
+  assert.equal(cfg.schema_version, 2);
   assert.equal(cfg.harnesses['copilot-cli'], undefined);
   assert.equal(cfg.harnesses['copilot-vscode'].assignments.lite, 'b');
 });
