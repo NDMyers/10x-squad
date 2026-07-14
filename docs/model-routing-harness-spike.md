@@ -1,7 +1,7 @@
 # Harness Spike — Explicit Per-Dispatch Subagent Model Routing
 
 **Plan:** `docs/plans/2026-07-13-configurable-work-tier-model-routing.md` (Task 0)
-**Started:** 2026-07-13 (Claude Fable 5) · **Status: GATE PASSED for `copilot-cli` (all three pre-registered criteria, direct evidence below). `copilot-vscode` UNSUPPORTED-PENDING-MANUAL-PROBE per AC12.**
+**Started:** 2026-07-13 (Claude Fable 5) · **Status: GATE PASSED for `copilot-cli` (all three pre-registered criteria, direct evidence below). For `copilot-vscode`, failure-path catalog discovery is observed; the verified exact-routing gate has not passed because there is no independent post-launch executed-model identity signal.**
 
 ## Pre-registered evidence criteria (fixed 2026-07-13, before any probe ran)
 
@@ -19,7 +19,7 @@
 | Node | v20.19.0 |
 | Parent model selection | `~/.copilot/settings.json` currently `{"model": "auto"}` — **violates invariant 12 premise; user must select an explicit model before squad runs** |
 | Enterprise experiment flags (from `~/.copilot/config.json` assignment cache) | `gpt-default`, `copilot_cli_gpt_5_4_for_subagents`, `copilot_cli_gpt_5_4_mini_for_explore`, `copilot_cli_opus_medium_effort_default` — **server-side experiments actively steer default subagent models** |
-| Workspace trust / enterprise policy | not yet recorded (pending VS Code manual probe) |
+| Workspace trust / enterprise policy | not recorded by the VS Code catalog-discovery observation (forward test remains) |
 
 ## Copilot CLI findings (2026-07-13)
 
@@ -90,36 +90,41 @@ Debug log: `No model backend (auth, legacy provider, or BYOK registry) available
 | §2 (CLI clause) runtime observability, not just spike-time | The JSONL event stream IS the session runtime output; debug logs additionally record model resolution with source attribution |
 | §3 resolver runs unattended; denial visible | D1 unattended success via `--allow-tool "shell(node:*)"`; D2 machine-visible denial |
 
-## Steps 2–3 — VS Code probes: **PENDING MANUAL (operator)**
+## Steps 2–3 — VS Code evidence boundary: **CATALOG DISCOVERY OBSERVED; EXECUTED IDENTITY UNPROVED**
 
-Cannot be driven from a terminal; requires the VS Code chat UI. Operator instructions:
+A live `runSubagent` call with the descriptive identifier `GPT-5.4 Thinking Medium Effort for trivial work` was rejected before child launch and returned the active session's selectable model list. `Auto (copilot)` appeared in that list but remains banned. This proves a failure-path catalog discovery mechanism for that authenticated, entitled session only; it does not prove that a valid requested model launches or identify the model that ultimately executes.
+
+A successful exact-model no-op can prove addressability. The current repository has no automated, independent post-launch executed-model identity signal for VS Code, so launch success alone cannot prove identity or the absence of substitution. The official [VS Code subagent documentation](https://code.visualstudio.com/docs/agents/subagents#_select-the-model-for-a-subagent) states that a requested subagent model above the main (parent) model's cost tier falls back to the main model; the documentation does not establish whether that fallback is independently observable through this repository's `runSubagent` path.
+
+Remaining forward checks require the VS Code chat UI:
 
 1. Select an explicit (non-Auto) parent model in the model picker; open the 10x-squad custom agent.
-2. Ask Vivaldi to `runSubagent` with a *different* valid model and prompt "return MODEL_ROUTE_OK and make no edits".
-3. Evidence to capture per pre-registered criteria: where the **executed child model identity** is displayed (subagent section header? hover? request log?). Credits-on-hover alone is INSUFFICIENT.
-4. Repeat with (a) a model above the parent's cost tier (docs say silent fallback to parent — determine whether the substitution is visible) and (b) an invalid identifier (expect error).
+2. Ask Vivaldi to `runSubagent` with an exact active-catalog model and the prompt "return MODEL_ROUTE_OK and make no edits"; launch success proves addressability.
+3. Record whether the **executed child model identity** is independently exposed (subagent section header, hover, request log, or result contract). Credits-on-hover alone are INSUFFICIENT.
+4. If the account exposes a safe reproducible pair, request a model above the parent's cost tier and record both the fallback and whether its executed identity is visible. If no pair exists, record the scenario as skipped/unverified.
 5. Record workspace trust state and any enterprise model-policy effects.
 6. Check whether the child can execute a persona skill's implementation duty (no parent "no-code" inheritance).
 
-## Step 5 — Unattended resolver: mechanism verified (CLI); VS Code pending manual probe.
+## Step 5 — Unattended resolver: mechanism verified (CLI); VS Code terminal-tool execution remains a forward test.
 
 ## Step 6 — Global-config readability
 
-CLI: shell tools run as the invoking user; `~/.config/10x-squad/model-routing.json` is readable wherever `shell(node:*)` is permitted — will be confirmed empirically in Probe D. VS Code: pending manual probe (terminal tool availability in agent context).
+CLI: shell tools run as the invoking user; `~/.config/10x-squad/model-routing.json` is readable wherever `shell(node:*)` is permitted — will be confirmed empirically in Probe D. VS Code: not established by the catalog-discovery call; global-config readability remains a forward test (terminal tool availability in agent context).
 
 ## Step 7 — Local/BYOK
 
 `copilot help providers` (BYOK topic) exists in CLI 1.0.70. Not configured on this machine → **untested**, per plan: absence of local-provider setup does not block cloud-only v1; cross-provider child dispatch remains unsupported until proven.
 
-## Step 8 — Gate status: **PASSED for `copilot-cli`; `copilot-vscode` UNSUPPORTED-PENDING-MANUAL-PROBE**
+## Step 8 — Gate status: **PASSED for `copilot-cli`; `copilot-vscode` CATALOG OBSERVED, VERIFIED EXACT ROUTING NOT PASSED**
 
 | Gate requirement | CLI | VS Code |
 |---|---|---|
-| Explicit per-dispatch selection | ✅ `task` tool `model` argument (Probe B) | pending manual (§Steps 2–3 checklist) |
-| Executed-model identity observable (criteria §1) | ✅ turn/subagent events | pending manual |
-| Resolver runs unattended | ✅ D1; denial visible D2 | pending manual |
+| Active-session catalog discovery | ✅ invalid `task` model error enumerates entitled models (Probe B2) | ✅ invalid `runSubagent` identifier rejected before launch and returned selectable labels |
+| Explicit per-dispatch selection | ✅ `task` tool `model` argument (Probe B) | `runSubagent` processes the model parameter; each valid label still requires an exact-model no-op |
+| Executed-model identity observable (criteria §1) | ✅ turn/subagent events | no automated, independent post-launch signal in this repository; addressability-only success stays unverified |
+| Resolver runs unattended | ✅ D1; denial visible D2 | not established; forward test remains |
 
-Consequences: Tasks 5–7 proceed with `copilot-cli` as the proven surface. `copilot-vscode` may be configured (its schema profile exists) but is documented **unsupported until the manual probe passes**, exactly per AC12. When the VS Code probe runs, append evidence here and update `docs/model-tier-configuration.md`.
+Consequences: `copilot-cli` remains the proven exact-routing surface. `copilot-vscode` configuration may complete after a successful no-op, but without independent identity evidence it records `unverified` / `addressability_probe` and emits a loud warning. An identity-observable probe records `verified` / `dispatch_smoke_test` only when requested and executed identifiers are byte-equal. Invalid or unavailable identifiers and observed mismatches or fallbacks hard-block before write. Do not claim the VS Code exact-routing gate or AC12 identity criterion has passed without that evidence.
 
 ## Addendum — custom-agent load hazard (2026-07-13, e2e verification)
 

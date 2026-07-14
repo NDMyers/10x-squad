@@ -26,9 +26,11 @@ Each harness has its own profile and identifier namespace — never reuse identi
 | Surface | Key | Status (2026-07-13) | Identifier form |
 |---|---|---|---|
 | Copilot CLI | `copilot-cli` | **Supported — actuator proven** (see `model-routing-harness-spike.md`) | CLI slugs, e.g. shape `gpt-5.4` |
-| VS Code Copilot | `copilot-vscode` | **Unsupported pending manual probe** (AC12); configurable, not yet verified | picker display strings |
+| VS Code Copilot | `copilot-vscode` | **Catalog discovery observed; verified exact-routing gate not passed** — addressability-only probes stay unverified | picker display strings |
 
-Example values in docs are illustrative shapes, never defaults. Catalog/doc presence ≠ availability: entitlement and auth filter the real list. On the CLI, the authoritative list comes from the harness itself (e.g., a failed dispatch error enumerates entitled models; `/subagents` shows per-agent choices).
+Example values in docs are illustrative shapes, never defaults. Catalog/doc presence ≠ availability: entitlement, authentication, and the active session filter the real list. On the CLI, the authoritative list comes from the harness itself (e.g., a failed dispatch error enumerates entitled models; `/subagents` shows per-agent choices). On VS Code, a live invalid `runSubagent` call was observed to reject the identifier before child launch and return that active session's selectable labels. That proves failure-path catalog discovery only, not addressability or executed-model identity.
+
+For VS Code, a successful exact-model no-op proves that the label is addressable. The repository currently has no automated, independent post-launch executed-model identity signal for that surface. In addition, the official [VS Code subagent documentation](https://code.visualstudio.com/docs/agents/subagents#_select-the-model-for-a-subagent) states that a requested subagent model above the main (parent) model's cost tier falls back to the main model. A VS Code probe is therefore verified only when requested and executed identities are independently observable and byte-equal; otherwise a successful launch remains explicitly addressability-only and unverified.
 
 ## Operational preconditions (Copilot CLI)
 
@@ -39,7 +41,7 @@ Example values in docs are illustrative shapes, never defaults. Catalog/doc pres
 
 ## Free-text and local/BYOK
 
-Free-text identifiers are stored byte-for-byte and stay visibly **unverified** until the active harness verifies them (harmless preflight or a no-side-effect dispatch probe comparing requested vs executed model). A local/BYOK model is configurable only as an exact identifier the active harness/provider already exposes; endpoints and credentials live outside routing configuration (the engine rejects credential-shaped fields). Cross-provider child dispatch is unsupported until a dedicated compatibility test proves it.
+Free text is session-only user intent and is never stored as an assignment. The skill resolves it against the active harness catalog and stores only the exact returned candidate, byte-for-byte. Each unique candidate gets a harmless preflight or no-side-effect dispatch probe. Independently observable, byte-equal requested and executed identities record `verified` / `dispatch_smoke_test`; a successful launch without an independent identity signal records `unverified` / `addressability_probe` and requires a loud warning. Invalid or unavailable identifiers and observed mismatches or fallbacks hard-block before write. A local/BYOK model is configurable only as an exact identifier the active harness/provider already exposes; endpoints and credentials live outside routing configuration (the engine rejects credential-shaped fields). Cross-provider child dispatch is unsupported until a dedicated compatibility test proves it.
 
 ## Failure behavior
 
@@ -47,4 +49,4 @@ Resolution and dispatch fail loud — no Auto, no parent inheritance, no cheaper
 
 ## When new models ship
 
-Nothing auto-promotes. Read the release evidence, run `/10x-squad-configure-tiers`, pick the identifier (it arrives unverified), let a no-side-effect probe verify it, and save. Retirements/policy changes surface as fail-loud dispatch errors, which route you back to the same skill.
+Nothing auto-promotes. Read the release evidence, run `/10x-squad-configure-tiers`, pick the identifier (it arrives unverified), and let a no-side-effect probe determine whether its identity is verified or only addressable and unverified before saving. Retirements/policy changes surface as fail-loud dispatch errors, which route you back to the same skill.
