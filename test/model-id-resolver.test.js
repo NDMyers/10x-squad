@@ -75,6 +75,62 @@ test('catalog excludes Copilot Auto with explicit reason and deduplicates exact 
   ]);
 });
 
+test('resolver preserves adapter-supplied forbidden catalog exclusions', () => {
+  const result = resolveModelIntent({
+    harness: 'copilot-vscode',
+    user_input: 'GPT-5.5 (copilot)',
+    catalog: {
+      harness: 'copilot-vscode',
+      source: 'harness',
+      checked_at: '2026-07-13T00:00:00.000Z',
+      models: ['GPT-5.5 (copilot)', 'GPT-5.4 (copilot)'],
+      excluded: [
+        {
+          model: 'Auto (copilot)',
+          reason: 'squad invariant: Auto banned',
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(result.selectable_models, [
+    'GPT-5.5 (copilot)',
+    'GPT-5.4 (copilot)',
+  ]);
+  assert.deepEqual(result.excluded, [
+    {
+      model: 'Auto (copilot)',
+      reason: 'squad invariant: Auto banned',
+    },
+  ]);
+});
+
+test('catalog merges and deduplicates supplied and discovered exclusions', () => {
+  const exactAllowedModel = ' GPT-5.5 (copilot) ';
+  const autoExclusion = {
+    model: 'Auto (copilot)',
+    reason: 'squad invariant: Auto banned',
+  };
+  const prepared = prepareCatalog({
+    ...catalog([
+      exactAllowedModel,
+      'Auto (copilot)',
+      'inherit',
+      exactAllowedModel,
+    ]),
+    excluded: [autoExclusion, { ...autoExclusion }],
+  }, 'copilot-vscode');
+
+  assert.deepEqual(prepared.models, [exactAllowedModel]);
+  assert.deepEqual(prepared.excluded, [
+    autoExclusion,
+    {
+      model: 'inherit',
+      reason: 'inherit is not an executable model identifier',
+    },
+  ]);
+});
+
 test('exact selectable identifier passes through byte-for-byte', () => {
   const userInput = 'GPT-5.5 (copilot)';
   const result = resolveModelIntent({
@@ -510,6 +566,38 @@ test('malformed catalog data fails closed', () => {
     () => prepareCatalog(catalog(['GPT-5.5', '   ']), 'copilot-vscode'),
     /non-empty strings/
   );
+});
+
+test('catalog excluded must be an array when supplied', () => {
+  for (const excluded of [null, {}, 'Auto (copilot)']) {
+    assert.throws(
+      () => prepareCatalog({ ...catalog(['GPT-5.5']), excluded }, 'copilot-vscode'),
+      /catalog excluded must be an array/
+    );
+  }
+
+  assert.deepEqual(
+    prepareCatalog(catalog(['GPT-5.5']), 'copilot-vscode').excluded,
+    []
+  );
+});
+
+test('catalog exclusions accept only canonical forbidden records', () => {
+  const malformedExclusions = [
+    new Array(1),
+    ['Auto (copilot)'],
+    [{ model: '   ', reason: 'squad invariant: Auto banned' }],
+    [{ model: 'GPT-5.5 (copilot)', reason: 'squad invariant: Auto banned' }],
+    [{ model: 'Auto (copilot)', reason: 'not the canonical reason' }],
+    [{ model: 'inherit', reason: null }],
+  ];
+
+  for (const excluded of malformedExclusions) {
+    assert.throws(
+      () => prepareCatalog({ ...catalog(['GPT-5.5']), excluded }, 'copilot-vscode'),
+      /catalog excluded must contain canonical forbidden records/
+    );
+  }
 });
 
 test('CLI verification-targets and build-profile use the executable gate', () => {

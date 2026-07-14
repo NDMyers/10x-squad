@@ -57,9 +57,27 @@ function prepareCatalog(catalog, harness) {
   if (!Array.isArray(catalog.models)) {
     throw new TypeError('catalog models must be an array');
   }
+  const hasExcluded = Object.prototype.hasOwnProperty.call(catalog, 'excluded');
+  if (hasExcluded && !Array.isArray(catalog.excluded)) {
+    throw new TypeError('catalog excluded must be an array');
+  }
+  const suppliedExclusions = hasExcluded ? catalog.excluded : [];
 
   const models = [];
   const excluded = [];
+  const excludedModels = new Set();
+  for (const entry of suppliedExclusions) {
+    const reason = isPlainObject(entry) ? forbiddenReason(entry.model) : null;
+    if (!reason || entry.reason !== reason) {
+      throw new TypeError(
+        'catalog excluded must contain canonical forbidden records'
+      );
+    }
+    if (!excludedModels.has(entry.model)) {
+      excludedModels.add(entry.model);
+      excluded.push({ model: entry.model, reason });
+    }
+  }
   const seen = new Set();
 
   for (const model of catalog.models) {
@@ -73,7 +91,10 @@ function prepareCatalog(catalog, harness) {
 
     const reason = forbiddenReason(model);
     if (reason) {
-      excluded.push({ model, reason });
+      if (!excludedModels.has(model)) {
+        excludedModels.add(model);
+        excluded.push({ model, reason });
+      }
     } else {
       models.push(model);
     }
