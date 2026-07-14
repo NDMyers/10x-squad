@@ -194,7 +194,31 @@ test('schema-v1 reads default runtime settings and successful writes upgrade to 
 
   assert.match(contract, /schema[- ]v1.*(?:missing|omitted) `?dispatch_settings`?.*`?auto`?\s*\/\s*`?auto`?/is);
   assert.match(contract, /successful (?:profile )?write.*schema v2|writes? upgrade.*schema v2/is);
-  assert.match(contract, /retained unrelated.*legacy profile.*(?:may|can).*omit.*dispatch_settings/is);
+  assert.match(
+    contract,
+    /unrelated retained.*legacy profiles?.*`?dispatch_settings`?.*(?:may|can).*remain omitted/is
+  );
+});
+
+test('schema-v2 omission is compatibility tolerance, not provable legacy provenance', () => {
+  const reference = readText(CONFIG_FORMAT_MD);
+
+  assert.match(
+    reference,
+    /schema v2.*accepts.*(?:missing|omitted) `?dispatch_settings`?.*compatibility.*stored provenance.*cannot be proven/is
+  );
+  assert.doesNotMatch(
+    reference,
+    /`?dispatch_settings`?.*may be omitted only on a retained unrelated legacy profile/i
+  );
+  assert.match(
+    reference,
+    /newly (?:built|upserted).*target profile.*all five.*`?dispatch_settings`?/is
+  );
+  assert.match(
+    reference,
+    /unrelated retained legacy profiles?.*(?:may|can).*remain omitted/is
+  );
 });
 
 test('explicit runtime settings are capability-gated before any side effect', () => {
