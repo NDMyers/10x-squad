@@ -48,17 +48,21 @@ Ambiguous and `no_match` stop before preview/write; `banned` cannot proceed eith
 
 ## Executable resolver and probe contract
 
-Before writing anything, create a unique, session-owned scratch directory outside `.10x-squad` using collision-safe exclusive creation. Refuse to overwrite any pre-existing file or directory. Every logical filename below lives only inside that scratch directory.
+Create a unique, session-owned scratch directory outside `.10x-squad` using collision-safe exclusive creation. Bind absolute `SKILL_ROOT` (the directory containing this skill's `SKILL.md`) and absolute `SESSION_SCRATCH` (that scratch directory) in the command environment. At initial creation, refuse to overwrite any pre-existing file or directory. Never overwrite a path not created and owned by this session. Exclusively create every fixed scratch path on first use; the session may later update only its owned `SESSION.json` to add probe observations. Every transient and proposal file lives under `SESSION_SCRATCH`; never rely on the current working directory.
 
-For every model intent, create session-only `RESOLVE_REQUEST.json` containing exactly the request `{harness,user_input,catalog}`, then run:
+For every model intent, create `$SESSION_SCRATCH/RESOLVE_REQUEST.json` with exclusive creation and write exactly `{harness,user_input,catalog}`, then run:
 
-```text
-node scripts/model-id-resolver.js resolve --input RESOLVE_REQUEST.json
+<!-- resolver-command:resolve:start -->
+```sh
+node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"
 ```
+<!-- resolver-command:resolve:end -->
 
 Require exit 0 and exactly one JSON object. Malformed output or exit 2 stops. Retain the returned resolution, not a reconstructed version.
 
-Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `SESSION.json` with `harness`, `catalog`, and `selections`. Each `selections[tier]` is a wrapper: `selections[tier].resolution` is the entire, unmodified single JSON object returned by that tier's `resolve` invocation. An exact wrapper is `{"resolution": <resolve stdout>}`. A likely wrapper is `{"resolution": <resolve stdout>, "confirmed": true}` only after affirmative confirmation; `confirmed` is a sibling of `resolution`, never nested inside it.
+Remove `RESOLVE_REQUEST.json` in a per-invocation `finally` before preparing the next model intent. The outer unconditional cleanup remains responsible for interruption or other abnormal exits.
+
+Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `$SESSION_SCRATCH/SESSION.json` with exclusive creation and the fields `harness`, `catalog`, and `selections`. Each `selections[tier]` is a wrapper: `selections[tier].resolution` is the entire, unmodified single JSON object returned by that tier's `resolve` invocation. An exact wrapper is `{"resolution": <resolve stdout>}`. A likely wrapper is `{"resolution": <resolve stdout>, "confirmed": true}` only after affirmative confirmation; `confirmed` is a sibling of `resolution`, never nested inside it.
 
 This complete session is executable as written:
 
@@ -86,19 +90,23 @@ This complete session is executable as written:
 
 Then run:
 
-```text
-node scripts/model-id-resolver.js verification-targets --input SESSION.json
+<!-- resolver-command:verification-targets:start -->
+```sh
+node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"
 ```
+<!-- resolver-command:verification-targets:end -->
 
-Require exit 0, exactly five assignments, and deduplicated `verification_targets`. Verification is deduplicated by unique identifier. Probe each target once with the exact prompt specified in `SKILL.md`, then add only raw observations under `probes[requested_model]`: `ok`, `requested_model`, `identity_observable`, `checked_at`, and any observed `executed_model` or failure `error`.
+Require exit 0, exactly five assignments, and deduplicated `verification_targets`. Verification is deduplicated by unique identifier. Probe each target once with the exact prompt specified in `SKILL.md`, then update only this session-owned `SESSION.json` to add raw observations under `probes[requested_model]`: `ok`, `requested_model`, `identity_observable`, `checked_at`, and any observed `executed_model` or failure `error`.
 
 Every successful probe explicitly includes `identity_observable: true` or `false`. `true` also requires `executed_model`; `false` omits it. Missing `executed_model` alone must NEVER be inferred as unobservable. A missing observability flag is a gate error.
 
 After every target has one successful, non-blocking observation, run:
 
-```text
-node scripts/model-id-resolver.js build-profile --input SESSION.json
+<!-- resolver-command:build-profile:start -->
+```sh
+node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"
 ```
+<!-- resolver-command:build-profile:end -->
 
 Require exit 0 and exactly one stdout JSON object. Pass its stdout JSON UNCHANGED as proposal input to `validate-profile` (if used), `diff-profile`, and `upsert-profile`. The skill must not manually assemble `assignments` or `model_checks`. Only exact active-catalog strings enter `assignments`; `original_input` is never stored.
 

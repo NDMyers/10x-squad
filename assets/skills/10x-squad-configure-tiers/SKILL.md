@@ -34,11 +34,11 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
 1. **Acquire the active harness catalog**
 
-   First create a unique, session-owned scratch directory outside `.10x-squad`; use it for every request, catalog, session, probe, and proposal file, and refuse to overwrite any pre-existing path. Acquire one current catalog for the active harness before accepting any new values. Follow the exact harness procedure in `references/model-resolution.md`. “Refresh model suggestions” means reacquire that harness catalog only; there is no frontier, documentation, or other-surface scan fallback. `Auto (copilot)` is excluded and banned. Stop if the harness does not return a reliable selectable list.
+   Create a unique, session-owned scratch directory outside `.10x-squad`. Bind absolute `SKILL_ROOT` (the directory containing this `SKILL.md`) and absolute `SESSION_SCRATCH` (that scratch directory) in the command environment. At initial creation, refuse to overwrite any pre-existing path; never overwrite a path not created and owned by this session. Exclusively create every fixed scratch path on first use. The session may later update only its owned `SESSION.json` to add probe observations. Every transient and proposal file stays under `SESSION_SCRATCH`. Never rely on the current working directory. Acquire one current catalog for the active harness before accepting any new values. Follow the exact harness procedure in `references/model-resolution.md`. “Refresh model suggestions” means reacquire that harness catalog only; there is no frontier, documentation, or other-surface scan fallback. `Auto (copilot)` is excluded and banned. Stop if the harness does not return a reliable selectable list.
 
 2. **Resolve every selected value**
 
-   Every source, including a structured choice, reused session value, free text, and keep-current, is user intent requiring resolution against the catalog. Free text is `user intent`, never assumed to be an exact identifier. Invoke `node scripts/model-id-resolver.js resolve --input RESOLVE_REQUEST.json` for every selected value.
+   Every source, including a structured choice, reused session value, free text, and keep-current, is user intent requiring resolution against the catalog. Free text is `user intent`, never assumed to be an exact identifier. Invoke `node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"` for every selected value.
 
    Exact catalog matches pass through. Likely matches require affirmative confirmation: display the exact candidate, ask once, and set `confirmed: true` only after an affirmative response. For `ambiguous`, show only returned exact candidates; after the user chooses, resolve that chosen exact string again so the stored outcome is `exact`. For `no_match`, show the full selectable list and stop pending an exact choice or cancel. `banned` stops. Ambiguous and `no_match` results stop before preview/write; `banned` does too.
 
@@ -46,7 +46,7 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
 3. **Verify each unique resolved identifier**
 
-   Put all five resolved selections in session state, then invoke `node scripts/model-id-resolver.js verification-targets --input SESSION.json`. Require exit 0, exactly five assignments, and its deduplicated `verification_targets`. Verification is deduplicated by unique identifier: probe each returned target exactly once with this exact prompt:
+   Put all five resolved selections in session state, exclusively create `$SESSION_SCRATCH/SESSION.json`, then invoke `node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"`. Require exit 0, exactly five assignments, and its deduplicated `verification_targets`. Verification is deduplicated by unique identifier: probe each returned target exactly once with this exact prompt:
 
    `Reply with exactly MODEL_ROUTE_OK. Do not read files, write files, or invoke tools.`
 
@@ -56,7 +56,7 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
 4. **Build the gated profile**
 
-   After all probes, run `node scripts/model-id-resolver.js build-profile --input SESSION.json` and require exit 0 with exactly one JSON object. Never manually assemble `assignments` or `model_checks`. The resolver maps observable, byte-equal requested/executed identity to `verified`/`dispatch_smoke_test`; a successful launch without an independent identity signal maps to `unverified`/`addressability_probe` and may proceed only with a loud warning. `original_input` is session-only and never stored.
+   After all probes, run `node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"` and require exit 0 with exactly one JSON object. Never manually assemble `assignments` or `model_checks`. The resolver maps observable, byte-equal requested/executed identity to `verified`/`dispatch_smoke_test`; a successful launch without an independent identity signal maps to `unverified`/`addressability_probe` and may proceed only with a loud warning. `original_input` is session-only and never stored.
 
 5. **Preview before writing**
 

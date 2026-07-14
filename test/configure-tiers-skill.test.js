@@ -15,7 +15,6 @@ const path = require('node:path');
 const SKILL_DIR = path.join(__dirname, '..', 'assets', 'skills', '10x-squad-configure-tiers');
 const SKILL_MD = path.join(SKILL_DIR, 'SKILL.md');
 const MODEL_RESOLUTION_MD = path.join(SKILL_DIR, 'references', 'model-resolution.md');
-const MODEL_ID_RESOLVER = path.join(SKILL_DIR, 'scripts', 'model-id-resolver.js');
 
 const CANONICAL = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 
@@ -35,9 +34,22 @@ function readModelResolution() {
   return fs.existsSync(MODEL_RESOLUTION_MD) ? fs.readFileSync(MODEL_RESOLUTION_MD, 'utf8') : '';
 }
 
-function runModelIdResolver(command, inputPath) {
-  return spawnSync(process.execPath, [MODEL_ID_RESOLVER, command, '--input', inputPath], {
+function documentedResolverCommand(subcommand) {
+  const commands = [...readModelResolution().matchAll(/```(?:text|sh)\n([\s\S]*?)\n```/gu)]
+    .map((match) => match[1].trim())
+    .filter((command) => (
+      !command.includes('\n')
+      && command.includes('model-id-resolver.js')
+      && command.includes(` ${subcommand} --input `)
+    ));
+  assert.equal(commands.length, 1, `expected one fenced ${subcommand} command`);
+  return commands[0];
+}
+
+function runDocumentedCommand(command, options) {
+  return spawnSync('/bin/sh', ['-c', command], {
     encoding: 'utf8',
+    ...options,
   });
 }
 
@@ -176,12 +188,28 @@ test('resolver output is the sole persisted profile proposal', () => {
     /build-profile.*stdout JSON unchanged.*(?:diff-profile|proposal input)/is);
 });
 
-test('the documented SESSION wrapper executes through both resolver gates', () => {
+test('the documented resolver commands execute from an unrelated cwd through both gates', () => {
   const session = documentedSession();
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'configure-tiers-doc-session-'));
-  const inputPath = path.join(scratch, 'SESSION.json');
+  const unrelatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'configure-tiers-doc-cwd-'));
+  const resolveInputPath = path.join(scratch, 'RESOLVE_REQUEST.json');
+  const sessionInputPath = path.join(scratch, 'SESSION.json');
+  const sessionOwnedPaths = new Set();
+  const commandOptions = {
+    cwd: unrelatedCwd,
+    env: {
+      ...process.env,
+      SKILL_ROOT: path.resolve(SKILL_DIR),
+      SESSION_SCRATCH: path.resolve(scratch),
+    },
+  };
+  const resolveCommand = documentedResolverCommand('resolve');
+  const verificationCommand = documentedResolverCommand('verification-targets');
+  const buildCommand = documentedResolverCommand('build-profile');
 
   try {
+    assert.equal(path.isAbsolute(commandOptions.env.SKILL_ROOT), true);
+    assert.equal(path.isAbsolute(commandOptions.env.SESSION_SCRATCH), true);
     const selections = Object.values(session.selections);
     const exact = selections.find((selection) => selection.resolution.state === 'exact');
     const likely = selections.find((selection) => selection.resolution.state === 'likely');
@@ -196,19 +224,28 @@ test('the documented SESSION wrapper executes through both resolver gates', () =
       [likely, 'GPT-5.5 Thinking XHigh Effort'],
     ];
     for (const [selection, userInput] of resolveCases) {
-      fs.writeFileSync(inputPath, JSON.stringify({
+      assert.equal(fs.existsSync(resolveInputPath), false,
+        'each intent must start without a pre-existing request file');
+      fs.writeFileSync(resolveInputPath, JSON.stringify({
         harness: session.harness,
         user_input: userInput,
         catalog: session.catalog,
-      }));
-      const result = runModelIdResolver('resolve', inputPath);
-      assert.equal(result.status, 0, result.stderr);
-      assert.deepEqual(selection.resolution, JSON.parse(result.stdout),
-        'resolution wrapper must retain the entire resolver stdout object unchanged');
+      }), { flag: 'wx' });
+      try {
+        const result = runDocumentedCommand(resolveCommand, commandOptions);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(selection.resolution, JSON.parse(result.stdout),
+          'resolution wrapper must retain the entire resolver stdout object unchanged');
+      } finally {
+        fs.rmSync(resolveInputPath, { force: true });
+      }
     }
 
-    fs.writeFileSync(inputPath, JSON.stringify(session));
-    const verificationResult = runModelIdResolver('verification-targets', inputPath);
+    assert.equal(fs.existsSync(sessionInputPath), false,
+      'verification must start without a pre-existing session file');
+    fs.writeFileSync(sessionInputPath, JSON.stringify(session), { flag: 'wx' });
+    sessionOwnedPaths.add(sessionInputPath);
+    const verificationResult = runDocumentedCommand(verificationCommand, commandOptions);
     assert.equal(verificationResult.status, 0, verificationResult.stderr);
     const verification = JSON.parse(verificationResult.stdout);
     assert.deepEqual(Object.keys(verification.assignments), CANONICAL);
@@ -227,14 +264,45 @@ test('the documented SESSION wrapper executes through both resolver gates', () =
         checked_at: new Date(Date.UTC(2026, 6, 13, 1, index)).toISOString(),
       },
     ]));
-    fs.writeFileSync(inputPath, JSON.stringify(session));
-    const profileResult = runModelIdResolver('build-profile', inputPath);
+    assert.equal(sessionOwnedPaths.has(sessionInputPath), true,
+      'only this session may update its exclusively created session file');
+    fs.writeFileSync(sessionInputPath, JSON.stringify(session));
+    const profileResult = runDocumentedCommand(buildCommand, commandOptions);
     assert.equal(profileResult.status, 0, profileResult.stderr);
     const profile = JSON.parse(profileResult.stdout);
     assert.deepEqual(profile.assignments, verification.assignments);
     assert.deepEqual(Object.keys(profile.model_checks), verification.verification_targets);
+    assert.deepEqual(fs.readdirSync(unrelatedCwd), [], 'commands must not use cwd for transient files');
+    assert.equal(
+      resolveCommand,
+      'node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"'
+    );
+    assert.equal(
+      verificationCommand,
+      'node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"'
+    );
+    assert.equal(
+      buildCommand,
+      'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"'
+    );
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(unrelatedCwd, { recursive: true, force: true });
+  }
+});
+
+test('the skill records absolute cwd-independent scratch roots', () => {
+  const { body } = readSkill();
+  assert.match(body,
+    /bind absolute `SKILL_ROOT`.*absolute `SESSION_SCRATCH`.*command environment/is);
+  assert.match(body, /never rely on (?:the )?(?:current working directory|cwd)/i);
+  assert.match(body, /every transient.*`SESSION_SCRATCH`/is);
+  for (const command of [
+    'node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"',
+    'node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"',
+    'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"',
+  ]) {
+    assert.ok(body.includes(command), `SKILL.md must use cwd-independent command: ${command}`);
   }
 });
 
@@ -264,7 +332,8 @@ test('the copilot-cli adapter fails before child launch to acquire only live exa
 
 test('session scratch storage is collision-safe and cleaned on every exit', () => {
   const { body } = readSkill();
-  const contract = `${body}\n${readModelResolution()}`;
+  const reference = readModelResolution();
+  const contract = `${body}\n${reference}`;
 
   assert.match(contract, /unique,? session-owned scratch directory/i);
   assert.match(contract, /scratch directory.*outside `?\.10x-squad`?/is);
@@ -272,4 +341,12 @@ test('session scratch storage is collision-safe and cleaned on every exit', () =
   assert.match(contract,
     /cleanup.*unconditional.*finally-style.*success.*cancellation.*hard-block\/stop.*error.*interruption/is);
   assert.match(contract, /never.*(?:place|create).*\.10x-squad.*commit/is);
+  assert.match(reference,
+    /bind.*`SKILL_ROOT`.*`SESSION_SCRATCH`.*command environment/is);
+  assert.match(reference,
+    /create.*RESOLVE_REQUEST\.json.*exclusive.*remove.*per-invocation.*finally.*before.*next model intent/is);
+  assert.match(reference,
+    /create.*SESSION\.json.*exclusive/is);
+  assert.match(reference,
+    /never overwrite.*(?:not|was not).*(?:created|owned).*session/is);
 });
