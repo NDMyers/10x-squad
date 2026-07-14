@@ -34,7 +34,7 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
 1. **Acquire the active harness catalog**
 
-   Create a unique, session-owned scratch directory outside `.10x-squad`. Bind absolute `SKILL_ROOT` (the directory containing this `SKILL.md`) and absolute `SESSION_SCRATCH` (that scratch directory) in the command environment. At initial creation, refuse to overwrite any pre-existing path; never overwrite a path not created and owned by this session. Exclusively create every fixed scratch path on first use. The session may later update only its owned `SESSION.json` to add probe observations. Every transient and proposal file stays under `SESSION_SCRATCH`. Never rely on the current working directory. Acquire one current catalog for the active harness before accepting any new values. Follow the exact harness procedure in `references/model-resolution.md`. “Refresh model suggestions” means reacquire that harness catalog only; there is no frontier, documentation, or other-surface scan fallback. `Auto (copilot)` is excluded and banned. Stop if the harness does not return a reliable selectable list.
+   Create a unique, session-owned scratch directory outside `.10x-squad`. Bind absolute `SKILL_ROOT` (the directory containing this `SKILL.md`) and absolute `SESSION_SCRATCH` (that scratch directory) in the command environment. Bind selected `ACTIVE_HARNESS` to the active harness, selected `TARGET_SCOPE` to `global|workspace`, and absolute `WORKSPACE_ROOT` to the current workspace root. At initial creation, refuse to overwrite any pre-existing path; never overwrite a path not created and owned by this session. Exclusively create every fixed scratch path on first use. The session may later update only its owned `SESSION.json` to add probe observations. Every transient and proposal file stays under `SESSION_SCRATCH`. Never rely on the current working directory. Acquire one current catalog for the active harness before accepting any new values. Follow the exact harness procedure in `references/model-resolution.md`. “Refresh model suggestions” means reacquire that harness catalog only; there is no frontier, documentation, or other-surface scan fallback. `Auto (copilot)` is excluded and banned. Stop if the harness does not return a reliable selectable list.
 
 2. **Resolve every selected value**
 
@@ -70,15 +70,15 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
    Save the exact `build-profile` stdout bytes by exclusive creation at `$SESSION_SCRATCH/PROPOSAL.json`. Pass that unchanged JSON as proposal input to `diff-profile`; use the same unchanged file for all later profile commands. `validate-profile` may perform a standalone validation. Show the stored-file change and resulting effective model + reasoning + context mapping, distinguish verified from addressability-only entries, and ask for confirmation.
 
-   For the executable Copilot CLI workspace path, bind absolute `WORKSPACE_ROOT` and run:
+   Use the selected harness and scope bindings. Always pass absolute `WORKSPACE_ROOT`, including for global scope, so effective output can honor workspace precedence. Run:
 
-   `node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli`
+   `node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"`
 
 6. **Write**
 
    After confirmation, pass only the unchanged resolver-built proposal to `upsert-profile`. A successful write uses schema v2. Invalid input leaves the prior file untouched.
 
-   `node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli`
+   `node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"`
 
 7. **Prove the result**
 

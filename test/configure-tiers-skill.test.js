@@ -82,6 +82,18 @@ function documentedSession() {
   return JSON.parse(match[1]);
 }
 
+function allAutoVscodeSession() {
+  const session = documentedSession();
+  session.harness = 'copilot-vscode';
+  session.catalog.harness = 'copilot-vscode';
+  for (const selection of Object.values(session.selections)) {
+    selection.resolution.harness = 'copilot-vscode';
+    selection.reasoning_effort = 'auto';
+    selection.context_tier = 'auto';
+  }
+  return session;
+}
+
 function referenceSection(heading) {
   const reference = readModelResolution();
   const marker = `## ${heading}`;
@@ -310,14 +322,16 @@ test('resolver output is the sole persisted profile proposal', () => {
     /build-profile.*stdout JSON unchanged.*(?:diff-profile|proposal input)/is);
 });
 
-test('the documented resolver commands execute from an unrelated cwd through both gates', () => {
-  const session = documentedSession();
+function runDocumentedConfigurationScenario({ session, targetScope }) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'configure-tiers-doc-session-'));
   const unrelatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'configure-tiers-doc-cwd-'));
   const resolveInputPath = path.join(scratch, 'RESOLVE_REQUEST.json');
   const sessionInputPath = path.join(scratch, 'SESSION.json');
   const proposalInputPath = path.join(scratch, 'PROPOSAL.json');
   const workspaceRoot = path.join(scratch, 'workspace');
+  const xdgConfigHome = path.join(scratch, 'xdg');
+  const workspaceConfigPath = path.join(workspaceRoot, '.10x-squad', 'model-routing.json');
+  const globalConfigPath = path.join(xdgConfigHome, '10x-squad', 'model-routing.json');
   const sessionOwnedPaths = new Set();
   const commandOptions = {
     cwd: unrelatedCwd,
@@ -326,6 +340,9 @@ test('the documented resolver commands execute from an unrelated cwd through bot
       SKILL_ROOT: path.resolve(SKILL_DIR),
       SESSION_SCRATCH: path.resolve(scratch),
       WORKSPACE_ROOT: path.resolve(workspaceRoot),
+      XDG_CONFIG_HOME: path.resolve(xdgConfigHome),
+      ACTIVE_HARNESS: session.harness,
+      TARGET_SCOPE: targetScope,
     },
   };
   const resolveCommand = documentedResolverCommand('resolve');
@@ -340,8 +357,8 @@ test('the documented resolver commands execute from an unrelated cwd through bot
     assert.equal(path.isAbsolute(commandOptions.env.SKILL_ROOT), true);
     assert.equal(path.isAbsolute(commandOptions.env.SESSION_SCRATCH), true);
     assert.equal(path.isAbsolute(commandOptions.env.WORKSPACE_ROOT), true);
-    assert.equal(session.harness, 'copilot-cli',
-      'mixed explicit runtime settings are supported only by the CLI harness');
+    assert.ok(['global', 'workspace'].includes(commandOptions.env.TARGET_SCOPE));
+    assert.equal(commandOptions.env.ACTIVE_HARNESS, session.harness);
     const selections = Object.values(session.selections);
     const exact = selections.find((selection) => selection.resolution.state === 'exact');
     const likely = selections.find((selection) => selection.resolution.state === 'likely');
@@ -354,10 +371,17 @@ test('the documented resolver commands execute from an unrelated cwd through bot
       assert.equal(Object.hasOwn(selection, 'reasoning_effort'), true);
       assert.equal(Object.hasOwn(selection, 'context_tier'), true);
     }
-    assert.ok(selections.some((selection) => selection.reasoning_effort === 'auto'));
-    assert.ok(selections.some((selection) => selection.reasoning_effort !== 'auto'));
-    assert.ok(selections.some((selection) => selection.context_tier === 'auto'));
-    assert.ok(selections.some((selection) => selection.context_tier !== 'auto'));
+    if (session.harness === 'copilot-cli') {
+      assert.ok(selections.some((selection) => selection.reasoning_effort === 'auto'));
+      assert.ok(selections.some((selection) => selection.reasoning_effort !== 'auto'));
+      assert.ok(selections.some((selection) => selection.context_tier === 'auto'));
+      assert.ok(selections.some((selection) => selection.context_tier !== 'auto'));
+    } else {
+      assert.equal(session.harness, 'copilot-vscode');
+      assert.ok(selections.every((selection) => (
+        selection.reasoning_effort === 'auto' && selection.context_tier === 'auto'
+      )), 'unsupported explicit VS Code settings must have gated before this session');
+    }
 
     const resolveCases = [
       [exact, exact.resolution.candidate],
@@ -433,38 +457,66 @@ test('the documented resolver commands execute from an unrelated cwd through bot
     fs.mkdirSync(workspaceRoot, { recursive: true });
     const diffResult = runDocumentedCommand(diffCommand, commandOptions);
     assert.equal(diffResult.status, 0, diffResult.stderr);
+    const diff = JSON.parse(diffResult.stdout);
+    assert.equal(diff.scope, targetScope);
+    assert.equal(diff.harness, session.harness);
+    assert.equal(fs.existsSync(workspaceConfigPath), false, 'preview must not write workspace config');
+    assert.equal(fs.existsSync(globalConfigPath), false, 'preview must not write global config');
     const upsertResult = runDocumentedCommand(upsertCommand, commandOptions);
     assert.equal(upsertResult.status, 0, upsertResult.stderr);
-    const stored = JSON.parse(fs.readFileSync(
-      path.join(workspaceRoot, '.10x-squad', 'model-routing.json'),
-      'utf8'
-    ));
+    const upsert = JSON.parse(upsertResult.stdout);
+    assert.equal(upsert.scope, targetScope);
+    assert.equal(upsert.harness, session.harness);
+    const targetConfigPath = targetScope === 'workspace' ? workspaceConfigPath : globalConfigPath;
+    const stored = JSON.parse(fs.readFileSync(targetConfigPath, 'utf8'));
     assert.equal(stored.schema_version, 2);
-    assert.deepEqual(stored.harnesses['copilot-cli'].dispatch_settings, verification.dispatch_settings);
+    assert.deepEqual(
+      stored.harnesses[session.harness].dispatch_settings,
+      verification.dispatch_settings
+    );
+    if (targetScope === 'global') {
+      assert.equal(fs.existsSync(workspaceConfigPath), false,
+        'global configuration must not write a workspace profile');
+    } else {
+      assert.equal(fs.existsSync(globalConfigPath), false,
+        'workspace configuration must not write a global profile');
+    }
     assert.deepEqual(fs.readdirSync(unrelatedCwd), [], 'commands must not use cwd for transient files');
-    assert.equal(
-      resolveCommand,
-      'node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"'
-    );
-    assert.equal(
-      verificationCommand,
-      'node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"'
-    );
-    assert.equal(
-      buildCommand,
-      'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"'
-    );
-    assert.equal(
-      diffCommand,
-      'node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli'
-    );
-    assert.equal(
-      upsertCommand,
-      'node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli'
-    );
+    return { resolveCommand, verificationCommand, buildCommand, diffCommand, upsertCommand };
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
     fs.rmSync(unrelatedCwd, { recursive: true, force: true });
+  }
+}
+
+test('the documented commands honor selected workspace CLI and global VS Code targets', () => {
+  const scenarios = [
+    { session: documentedSession(), targetScope: 'workspace' },
+    { session: allAutoVscodeSession(), targetScope: 'global' },
+  ];
+  const results = scenarios.map(runDocumentedConfigurationScenario);
+
+  for (const commands of results) {
+    assert.equal(
+      commands.resolveCommand,
+      'node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"'
+    );
+    assert.equal(
+      commands.verificationCommand,
+      'node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"'
+    );
+    assert.equal(
+      commands.buildCommand,
+      'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"'
+    );
+    assert.equal(
+      commands.diffCommand,
+      'node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"'
+    );
+    assert.equal(
+      commands.upsertCommand,
+      'node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"'
+    );
   }
 });
 
@@ -474,12 +526,15 @@ test('the skill records absolute cwd-independent scratch roots', () => {
     /bind absolute `SKILL_ROOT`.*absolute `SESSION_SCRATCH`.*command environment/is);
   assert.match(body, /never rely on (?:the )?(?:current working directory|cwd)/i);
   assert.match(body, /every transient.*`SESSION_SCRATCH`/is);
+  assert.match(body,
+    /bind selected `ACTIVE_HARNESS`.*`TARGET_SCOPE`.*`global\|workspace`.*absolute `WORKSPACE_ROOT`/is);
+  assert.match(body, /always pass.*`WORKSPACE_ROOT`.*global.*workspace precedence/is);
   for (const command of [
     'node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"',
     'node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"',
     'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"',
-    'node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli',
-    'node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli',
+    'node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"',
+    'node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"',
   ]) {
     assert.ok(body.includes(command), `SKILL.md must use cwd-independent command: ${command}`);
   }

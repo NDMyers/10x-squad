@@ -127,17 +127,17 @@ node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_
 
 Require exit 0 and exactly one stdout JSON object. `build-profile` is the sole proposal builder: the skill must not manually assemble or modify `assignments`, `dispatch_settings`, or `model_checks`. Save its stdout JSON unchanged, by exclusive creation, as `$SESSION_SCRATCH/PROPOSAL.json`. Pass those exact bytes as proposal input to `validate-profile` (if used), `diff-profile`, and `upsert-profile`. Only exact active-catalog strings enter `assignments`; `original_input` is never stored.
 
-For the executable Copilot CLI workspace example, bind an absolute `WORKSPACE_ROOT`, then preview and upsert the same proposal:
+The mixed `SESSION.json` example above remains a Copilot CLI example, but preview and write must honor the user's selected target. Bind selected `ACTIVE_HARNESS` to the active harness, selected `TARGET_SCOPE` to `global|workspace`, and absolute `WORKSPACE_ROOT` to the current workspace root. Always pass `WORKSPACE_ROOT`, including when `TARGET_SCOPE` is `global`, so effective output can honor workspace precedence. Preview and upsert the same proposal:
 
 <!-- config-command:diff-profile:start -->
 ```sh
-node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli
+node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"
 ```
 <!-- config-command:diff-profile:end -->
 
 <!-- config-command:upsert-profile:start -->
 ```sh
-node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli
+node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope "$TARGET_SCOPE" --workspace-root "$WORKSPACE_ROOT" --harness "$ACTIVE_HARNESS"
 ```
 <!-- config-command:upsert-profile:end -->
 
