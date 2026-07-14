@@ -34,7 +34,7 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
 1. **Acquire the active harness catalog**
 
-   Acquire one current catalog for the active harness before accepting any new values. Follow the exact harness procedure in `references/model-resolution.md`. “Refresh model suggestions” means reacquire that harness catalog only; there is no frontier, documentation, or other-surface scan fallback. `Auto (copilot)` is excluded and banned. Stop if the harness does not return a reliable selectable list.
+   First create a unique, session-owned scratch directory outside `.10x-squad`; use it for every request, catalog, session, probe, and proposal file, and refuse to overwrite any pre-existing path. Acquire one current catalog for the active harness before accepting any new values. Follow the exact harness procedure in `references/model-resolution.md`. “Refresh model suggestions” means reacquire that harness catalog only; there is no frontier, documentation, or other-surface scan fallback. `Auto (copilot)` is excluded and banned. Stop if the harness does not return a reliable selectable list.
 
 2. **Resolve every selected value**
 
@@ -70,7 +70,7 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
    Run `resolve` again for all five tiers from saved configuration and report model, scope, and check status. Distinguish `verified` dispatch identity from addressability-only `unverified` evidence; never call the latter fully verified. Final success is forbidden while any tier is unresolved or unaddressable.
 
-Delete all session request, catalog, probe, and proposal files after completion or cancellation. Never place them under `.10x-squad` or commit them.
+Cleanup runs unconditionally in a `finally-style` path on success, cancellation, hard-block/stop, error, or interruption. Remove only the session-owned scratch directory. Never place it under `.10x-squad` or commit it.
 
 ## Removal
 

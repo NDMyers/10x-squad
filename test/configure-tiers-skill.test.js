@@ -7,12 +7,15 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const SKILL_DIR = path.join(__dirname, '..', 'assets', 'skills', '10x-squad-configure-tiers');
 const SKILL_MD = path.join(SKILL_DIR, 'SKILL.md');
 const MODEL_RESOLUTION_MD = path.join(SKILL_DIR, 'references', 'model-resolution.md');
+const MODEL_ID_RESOLVER = path.join(SKILL_DIR, 'scripts', 'model-id-resolver.js');
 
 const CANONICAL = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 
@@ -30,6 +33,30 @@ function readSkill() {
 
 function readModelResolution() {
   return fs.existsSync(MODEL_RESOLUTION_MD) ? fs.readFileSync(MODEL_RESOLUTION_MD, 'utf8') : '';
+}
+
+function runModelIdResolver(command, inputPath) {
+  return spawnSync(process.execPath, [MODEL_ID_RESOLVER, command, '--input', inputPath], {
+    encoding: 'utf8',
+  });
+}
+
+function documentedSession() {
+  const reference = readModelResolution();
+  const match = reference.match(
+    /<!-- executable-session-example:start -->\s*```json\n([\s\S]*?)\n```\s*<!-- executable-session-example:end -->/u
+  );
+  assert.ok(match, 'model-resolution.md must contain the marked fenced JSON SESSION example');
+  return JSON.parse(match[1]);
+}
+
+function referenceSection(heading) {
+  const reference = readModelResolution();
+  const marker = `## ${heading}`;
+  const start = reference.indexOf(marker);
+  assert.ok(start >= 0, `model-resolution.md must contain ${marker}`);
+  const next = reference.indexOf('\n## ', start + marker.length);
+  return reference.slice(start, next < 0 ? undefined : next);
 }
 
 test('frontmatter is limited to a valid name and description', () => {
@@ -147,4 +174,102 @@ test('resolver output is the sole persisted profile proposal', () => {
     /(?:must not|never) manually (?:assemble|build).*assignments.*model_checks/is);
   assert.match(contract,
     /build-profile.*stdout JSON unchanged.*(?:diff-profile|proposal input)/is);
+});
+
+test('the documented SESSION wrapper executes through both resolver gates', () => {
+  const session = documentedSession();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'configure-tiers-doc-session-'));
+  const inputPath = path.join(scratch, 'SESSION.json');
+
+  try {
+    const selections = Object.values(session.selections);
+    const exact = selections.find((selection) => selection.resolution.state === 'exact');
+    const likely = selections.find((selection) => selection.resolution.state === 'likely');
+    assert.ok(exact, 'documented SESSION must include an exact selection');
+    assert.ok(likely, 'documented SESSION must include a likely selection');
+    assert.equal(likely.confirmed, true, 'likely confirmation must be a selection sibling');
+    assert.equal(Object.hasOwn(likely.resolution, 'confirmed'), false,
+      'confirmed must never be nested inside resolution');
+
+    const resolveCases = [
+      [exact, exact.resolution.candidate],
+      [likely, 'GPT-5.5 Thinking XHigh Effort'],
+    ];
+    for (const [selection, userInput] of resolveCases) {
+      fs.writeFileSync(inputPath, JSON.stringify({
+        harness: session.harness,
+        user_input: userInput,
+        catalog: session.catalog,
+      }));
+      const result = runModelIdResolver('resolve', inputPath);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(selection.resolution, JSON.parse(result.stdout),
+        'resolution wrapper must retain the entire resolver stdout object unchanged');
+    }
+
+    fs.writeFileSync(inputPath, JSON.stringify(session));
+    const verificationResult = runModelIdResolver('verification-targets', inputPath);
+    assert.equal(verificationResult.status, 0, verificationResult.stderr);
+    const verification = JSON.parse(verificationResult.stdout);
+    assert.deepEqual(Object.keys(verification.assignments), CANONICAL);
+    assert.equal(Object.keys(verification.assignments).length, 5);
+    assert.deepEqual(
+      verification.verification_targets,
+      [...new Set(Object.values(verification.assignments))]
+    );
+
+    session.probes = Object.fromEntries(verification.verification_targets.map((model, index) => [
+      model,
+      {
+        ok: true,
+        requested_model: model,
+        identity_observable: false,
+        checked_at: new Date(Date.UTC(2026, 6, 13, 1, index)).toISOString(),
+      },
+    ]));
+    fs.writeFileSync(inputPath, JSON.stringify(session));
+    const profileResult = runModelIdResolver('build-profile', inputPath);
+    assert.equal(profileResult.status, 0, profileResult.stderr);
+    const profile = JSON.parse(profileResult.stdout);
+    assert.deepEqual(profile.assignments, verification.assignments);
+    assert.deepEqual(Object.keys(profile.model_checks), verification.verification_targets);
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('model resolution defines explicit catalog adapters for both active harnesses', () => {
+  const reference = readModelResolution();
+  assert.deepEqual(
+    [
+      reference.includes('## copilot-vscode adapter'),
+      reference.includes('## copilot-cli adapter'),
+    ],
+    [true, true]
+  );
+});
+
+test('the copilot-cli adapter fails before child launch to acquire only live exact labels', () => {
+  const adapter = referenceSection('copilot-cli adapter');
+  assert.match(adapter, /active CLI child dispatch tool.*`task`/i);
+  assert.match(adapter, /`__10x_catalog_probe__`/);
+  assert.match(adapter, /fail(?:s|ure) before child launch/i);
+  assert.match(adapter, /`Available models`/);
+  assert.match(adapter, /only (?:the )?exact returned labels/i);
+  assert.match(adapter, /filter forbidden.*preserv.*byte-for-byte/is);
+  assert.match(adapter, /no reliable list.*STOP.*raw harness error/is);
+  assert.match(adapter,
+    /never use.*help.*documentation.*another surface.*hardcoded/is);
+});
+
+test('session scratch storage is collision-safe and cleaned on every exit', () => {
+  const { body } = readSkill();
+  const contract = `${body}\n${readModelResolution()}`;
+
+  assert.match(contract, /unique,? session-owned scratch directory/i);
+  assert.match(contract, /scratch directory.*outside `?\.10x-squad`?/is);
+  assert.match(contract, /refus(?:e|es).*overwrite.*pre-existing/is);
+  assert.match(contract,
+    /cleanup.*unconditional.*finally-style.*success.*cancellation.*hard-block\/stop.*error.*interruption/is);
+  assert.match(contract, /never.*(?:place|create).*\.10x-squad.*commit/is);
 });

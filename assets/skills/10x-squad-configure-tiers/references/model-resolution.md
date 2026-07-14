@@ -18,13 +18,21 @@ Acquire one catalog for the active harness and retain this shape in session stat
 
 `Auto (copilot)` is excluded from `models` and banned.
 
-For `copilot-vscode`:
+## copilot-vscode adapter
 
 1. Prefer a structured selectable-subagent-model list exposed by the active agent tool.
 2. Otherwise call `runSubagent` with the impossible identifier `__10x_catalog_probe__` and the no-side-effect prompt `Do not read files, write files, or invoke tools.` The expected path is rejection before child launch with the active-session selectable list.
 3. Convert only returned exact labels into `catalog.models`; never supplement them from documentation, provider pages, another surface, or memory.
 4. Filter forbidden entries while preserving every remaining string byte-for-byte.
 5. If no reliable list is returned, STOP and show the raw harness error. There is no hardcoded fallback.
+
+## copilot-cli adapter
+
+1. Prefer a structured active-session selectable child-model list when the harness exposes one.
+2. Otherwise invoke the active CLI child dispatch tool `task` with model `__10x_catalog_probe__` and the no-side-effect prompt `Do not read files, write files, or invoke tools.`
+3. The expected proven path is failure before child launch with the exact `Available models` list for the entitled active account.
+4. Convert only the exact returned labels into `catalog.models`; filter forbidden entries while preserving every remaining string byte-for-byte.
+5. If no reliable list is returned, STOP and show the raw harness error. Never use help, documentation, another surface, or hardcoded data as a fallback.
 
 ## Matching states and interaction
 
@@ -40,6 +48,8 @@ Ambiguous and `no_match` stop before preview/write; `banned` cannot proceed eith
 
 ## Executable resolver and probe contract
 
+Before writing anything, create a unique, session-owned scratch directory outside `.10x-squad` using collision-safe exclusive creation. Refuse to overwrite any pre-existing file or directory. Every logical filename below lives only inside that scratch directory.
+
 For every model intent, create session-only `RESOLVE_REQUEST.json` containing exactly the request `{harness,user_input,catalog}`, then run:
 
 ```text
@@ -48,7 +58,33 @@ node scripts/model-id-resolver.js resolve --input RESOLVE_REQUEST.json
 
 Require exit 0 and exactly one JSON object. Malformed output or exit 2 stops. Retain the returned resolution, not a reconstructed version.
 
-Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `SESSION.json` with `harness`, `catalog`, and `selections`, then run:
+Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `SESSION.json` with `harness`, `catalog`, and `selections`. Each `selections[tier]` is a wrapper: `selections[tier].resolution` is the entire, unmodified single JSON object returned by that tier's `resolve` invocation. An exact wrapper is `{"resolution": <resolve stdout>}`. A likely wrapper is `{"resolution": <resolve stdout>, "confirmed": true}` only after affirmative confirmation; `confirmed` is a sibling of `resolution`, never nested inside it.
+
+This complete session is executable as written:
+
+<!-- executable-session-example:start -->
+```json
+{
+  "harness": "copilot-vscode",
+  "catalog": {
+    "harness": "copilot-vscode",
+    "source": "harness",
+    "checked_at": "2026-07-13T00:00:00.000Z",
+    "models": ["GPT-5.5 (copilot)"],
+    "excluded": []
+  },
+  "selections": {
+    "trivial": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}},
+    "lite": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}},
+    "standard_clear": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"likely","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":true},"confirmed":true},
+    "standard_ambiguous": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}},
+    "complex": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}}
+  }
+}
+```
+<!-- executable-session-example:end -->
+
+Then run:
 
 ```text
 node scripts/model-id-resolver.js verification-targets --input SESSION.json
@@ -66,7 +102,7 @@ node scripts/model-id-resolver.js build-profile --input SESSION.json
 
 Require exit 0 and exactly one stdout JSON object. Pass its stdout JSON UNCHANGED as proposal input to `validate-profile` (if used), `diff-profile`, and `upsert-profile`. The skill must not manually assemble `assignments` or `model_checks`. Only exact active-catalog strings enter `assignments`; `original_input` is never stored.
 
-Remove `RESOLVE_REQUEST.json`, `SESSION.json`, and any transient proposal after completion or cancellation. Never create session files under `.10x-squad` or commit them.
+Cleanup runs unconditionally in a `finally-style` path on success, cancellation, hard-block/stop, error, or interruption: remove `RESOLVE_REQUEST.json`, `SESSION.json`, transient proposals, and then the session-owned scratch directory. Never create the scratch directory under `.10x-squad`, overwrite anything pre-existing, or commit it.
 
 ## Evidence gate
 
