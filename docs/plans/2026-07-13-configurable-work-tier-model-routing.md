@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Status:** Accepted with changes (Fable 5 review, 2026-07-13) — amendments folded  
+**Status:** Implemented model-routing baseline; runtime-setting policy superseded by [Work-Tier Runtime Settings Design](2026-07-13-work-tier-runtime-settings-design.md)
 **Date:** 2026-07-13  
 **Decision owner:** Nick  
 **Target repository:** `/Users/ndmyers/Accrualify/10x-squad`
@@ -298,7 +298,7 @@ These are implementation constraints, not reasons to return to generated workers
 - Cost, token-price, or premium-request optimization.
 - Automatic provider setup, endpoint management, or credential storage.
 - Cross-provider child dispatch unless the active harness proves it.
-- Reasoning-effort configuration. Retain the quality-first “highest supported” posture only where the harness exposes it; do not create another routing axis.
+- Reasoning-effort configuration was a v1 non-goal. This historical restriction and its “highest supported” posture are superseded by the work-tier runtime-settings design; reasoning and context are now explicit-or-`auto` per-tier settings.
 - Editing the work-tier classification rubric.
 
 ## Acceptance criteria
