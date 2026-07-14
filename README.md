@@ -1,5 +1,6 @@
 # 10x-squad
 
+
 Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator agent) plus seven skills for GitHub Copilot: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model, reasoning, and context routing).
 
 ```
@@ -13,6 +14,14 @@ evals/                               deployment parity check + headless eval har
 docs/review/                         squad review, architecture, eval plan, learning notes
 ```
 
+## Quickstart
+
+Clone repository then inside run:
+```
+node bin/10x-squad.js install --directory <workspace-root>
+```
+(re-running is idempotent; unrelated `.github` customizations are preserved).
+
 ## Model routing
 
 Each work-tier profile combines one exact model, one reasoning choice, and one context choice. `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves that profile for every persona dispatch through the installed resolver script. Runtime `auto` omits only its corresponding dispatch argument; it is not Copilot model Auto or parent inheritance. Explicit reasoning/context values are supported only by Copilot CLI today; VS Code and unknown harnesses allow `auto`/`auto` only. **Reinstalling never touches these config files.** Operator guide and learning summary: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md`.
@@ -23,15 +32,3 @@ Each work-tier profile combines one exact model, one reasoning choice, and one c
 
 History: until 2026-07-12 it was the other way around — the live `.github/` copy evolved (Sentinel, traceability gates, Jun 1) while `assets/` sat at May 8, so running the installer would have *rolled back* the best lineage and omitted Sentinel (absent from the manifest). That lineage was adopted back into `assets/` and the manifest fixed; this repo was git-initialized the same day so `.bak` files are retired as a versioning mechanism.
 
-## Release flow
-
-1. Edit `assets/…` (and `lib/installer.js` if the manifest changes — mirror it in `test/installer.test.js`, which intentionally duplicates the manifest as a spec).
-2. `npm test`
-3. Commit.
-4. Deploy: `node bin/10x-squad.js install --directory <workspace-root>` (re-running is idempotent; unrelated `.github` customizations are preserved).
-5. Verify parity: `evals/check-sync.sh` must report zero SOURCE failures (assumes the repo is checked out inside the deploy workspace; otherwise set `SQUAD_ROOT`).
-6. Upstream to corpay-agents via normal PR when ready.
-
-## Related
-
-Review, architecture diagrams, eval plan, and improvement ladder for the squad live in `docs/review/` (start at its README.md); the runnable eval harness is `evals/`. The Claude Code port regeneration (planned installer target) is step 4 on that ladder.
