@@ -14,7 +14,11 @@ const path = require('node:path');
 
 const SKILL_DIR = path.join(__dirname, '..', 'assets', 'skills', '10x-squad-configure-tiers');
 const SKILL_MD = path.join(SKILL_DIR, 'SKILL.md');
+const CONFIG_FORMAT_MD = path.join(SKILL_DIR, 'references', 'config-format.md');
 const MODEL_RESOLUTION_MD = path.join(SKILL_DIR, 'references', 'model-resolution.md');
+const OPENAI_YAML = path.join(SKILL_DIR, 'agents', 'openai.yaml');
+const OPERATOR_GUIDE = path.join(__dirname, '..', 'docs', 'model-tier-configuration.md');
+const README_MD = path.join(__dirname, '..', 'README.md');
 
 const CANONICAL = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 
@@ -34,6 +38,10 @@ function readModelResolution() {
   return fs.existsSync(MODEL_RESOLUTION_MD) ? fs.readFileSync(MODEL_RESOLUTION_MD, 'utf8') : '';
 }
 
+function readText(file) {
+  return fs.readFileSync(file, 'utf8');
+}
+
 function documentedResolverCommand(subcommand) {
   const commands = [...readModelResolution().matchAll(/```(?:text|sh)\n([\s\S]*?)\n```/gu)]
     .map((match) => match[1].trim())
@@ -41,6 +49,18 @@ function documentedResolverCommand(subcommand) {
       !command.includes('\n')
       && command.includes('model-id-resolver.js')
       && command.includes(` ${subcommand} --input `)
+    ));
+  assert.equal(commands.length, 1, `expected one fenced ${subcommand} command`);
+  return commands[0];
+}
+
+function documentedConfigCommand(subcommand) {
+  const commands = [...readModelResolution().matchAll(/```(?:text|sh)\n([\s\S]*?)\n```/gu)]
+    .map((match) => match[1].trim())
+    .filter((command) => (
+      !command.includes('\n')
+      && command.includes('model-tier-config.js')
+      && command.includes(` ${subcommand} `)
     ));
   assert.equal(commands.length, 1, `expected one fenced ${subcommand} command`);
   return commands[0];
@@ -111,12 +131,84 @@ test('the skill drives the harness-aware engine commands, not direct file edits'
     'SKILL.md must forbid editing the config file directly');
 });
 
-test('no retired routing vocabulary or auto/inherit assignment guidance', () => {
+test('no retired routing vocabulary or model auto/inherit assignment guidance', () => {
   const { body } = readSkill();
   assert.ok(!/frontier1|frontier2|higher-tier|economy[- ]tier/i.test(body),
     'retired tier taxonomy must not appear');
-  assert.match(body, /auto.*(banned|never|rejected|invalid)/i,
-    'auto must be identified as an invalid assignment');
+  assert.match(body, /(?:model|assignment).*`?auto`?.*(?:banned|never|rejected|invalid)/i,
+    'model Auto must be identified as an invalid assignment');
+});
+
+test('one tier profile combines an exact model with reasoning and context choices', () => {
+  const { body } = readSkill();
+  const contract = [
+    body,
+    readText(CONFIG_FORMAT_MD),
+    readModelResolution(),
+    readText(OPERATOR_GUIDE),
+  ].join('\n');
+
+  assert.match(contract, /(?:each|one) work-tier profile.*model.*reasoning.*context/is);
+  assert.match(contract, /reasoning_effort.*`?auto`?.*`?low`?.*`?medium`?.*`?high`?.*`?xhigh`?/is);
+  assert.match(contract, /context_tier.*`?auto`?.*`?default`?.*`?long_context`?/is);
+  assert.match(contract, /(?:choose|choice|offer).*(?:explicit.*or `?auto`?|`?auto`?.*or explicit).*reasoning/is);
+  assert.match(contract, /(?:choose|choice|offer).*(?:explicit.*or `?auto`?|`?auto`?.*or explicit).*context/is);
+});
+
+test('runtime auto omits only its own dispatch argument and is not model Auto or inheritance', () => {
+  const { body } = readSkill();
+  const contract = `${body}\n${readModelResolution()}\n${readText(OPERATOR_GUIDE)}`;
+
+  assert.match(contract, /`auto`.*omit.*(?:corresponding|that) dispatch argument/is);
+  assert.match(contract, /(?:independently|one setting.*without.*other)/is);
+  assert.match(contract, /active harness.*(?:adaptive|default) behavior/is);
+  assert.match(contract, /not.*(?:Copilot )?model Auto/is);
+  assert.match(contract, /not.*parent (?:model )?inheritance|not.*inherit.*parent/is);
+  assert.match(contract, /never (?:reconstruct|add).*`auto`/is);
+});
+
+test('new proposals contain all five complete dispatch settings entries', () => {
+  const configReference = readText(CONFIG_FORMAT_MD);
+  const schemaMatch = configReference.match(/## Schema[\s\S]*?```json\n([\s\S]*?)\n```/u);
+  assert.ok(schemaMatch, 'config-format.md must contain a fenced schema JSON example');
+  const example = JSON.parse(schemaMatch[1]);
+
+  assert.equal(example.schema_version, 2);
+  const profile = example.harnesses['copilot-cli'];
+  assert.ok(profile, 'schema example must include a copilot-cli profile');
+  assert.deepEqual(Object.keys(profile.assignments), CANONICAL);
+  assert.deepEqual(Object.keys(profile.dispatch_settings), CANONICAL);
+  for (const tier of CANONICAL) {
+    assert.deepEqual(
+      Object.keys(profile.dispatch_settings[tier]).sort(),
+      ['context_tier', 'reasoning_effort']
+    );
+  }
+
+  const contract = `${readSkill().body}\n${configReference}`;
+  assert.match(contract, /every new proposal.*all five.*dispatch_settings/is);
+});
+
+test('schema-v1 reads default runtime settings and successful writes upgrade to schema v2', () => {
+  const contract = `${readText(CONFIG_FORMAT_MD)}\n${readText(OPERATOR_GUIDE)}`;
+
+  assert.match(contract, /schema[- ]v1.*(?:missing|omitted) `?dispatch_settings`?.*`?auto`?\s*\/\s*`?auto`?/is);
+  assert.match(contract, /successful (?:profile )?write.*schema v2|writes? upgrade.*schema v2/is);
+  assert.match(contract, /retained unrelated.*legacy profile.*(?:may|can).*omit.*dispatch_settings/is);
+});
+
+test('explicit runtime settings are capability-gated before any side effect', () => {
+  const contract = [
+    readSkill().body,
+    readText(CONFIG_FORMAT_MD),
+    readModelResolution(),
+    readText(OPERATOR_GUIDE),
+  ].join('\n');
+
+  assert.match(contract, /only `?copilot-cli`?.*(?:allows|supports|may persist) explicit/is);
+  assert.match(contract, /`?copilot-vscode`?.*(?:unknown harness|unknown surface).*explicit/is);
+  assert.match(contract, /(?:either|any) setting.*explicit.*stop before.*probe.*preview.*write/is);
+  assert.match(contract, /`?auto`?\s*\/\s*`?auto`?.*(?:remains|is) allowed/is);
 });
 
 test('the write path is a low-freedom ordered workflow', () => {
@@ -124,7 +216,7 @@ test('the write path is a low-freedom ordered workflow', () => {
   const labels = [
     'Acquire the active harness catalog',
     'Resolve every selected value',
-    'Verify each unique resolved identifier',
+    'Verify each unique resolved tuple',
     'Build the gated profile',
     'Preview before writing',
     'Write',
@@ -139,7 +231,9 @@ test('the write path is a low-freedom ordered workflow', () => {
   }
 
   const verificationTargetsIndex = body.indexOf('verification-targets');
-  const buildProfileIndex = body.indexOf('build-profile');
+  const buildProfileIndex = body.indexOf(
+    'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile'
+  );
   const diffProfileIndex = body.indexOf('diff-profile');
   assert.ok(verificationTargetsIndex >= 0, 'SKILL.md must invoke verification-targets');
   assert.ok(buildProfileIndex > verificationTargetsIndex,
@@ -163,11 +257,15 @@ test('every model source is resolved against one live selectable catalog', () =>
   assert.match(contract, /every source.*keep-current.*user intent.*resolution against the catalog/is);
 });
 
-test('verification gates every unique resolved identifier before proposal construction', () => {
+test('verification gates every unique execution tuple before proposal construction', () => {
   const { body } = readSkill();
   const contract = `${body}\n${readModelResolution()}`;
 
-  assert.match(contract, /verification is deduplicated by unique identifier/i);
+  assert.match(contract, /verification is deduplicated by (?:the )?(?:complete|full).*tuple/i);
+  assert.match(contract, /model.*reasoning_effort.*context_tier/is);
+  assert.match(contract, /invoke.*exactly.*(?:target\.)?`?dispatch_arguments`?/is);
+  assert.match(contract, /probes\[target\.id\]|tuple id/is);
+  assert.match(contract, /requested_arguments.*raw (?:harness )?(?:observation|evidence)/is);
   assert.match(contract, /(?:observed )?(?:substitution|mismatch).*hard-block/is);
   assert.match(contract, /(?:unavailability|unavailable).*hard-block/is);
   assert.match(contract, /addressability_probe.*unverified/is);
@@ -183,7 +281,7 @@ test('resolver output is the sole persisted profile proposal', () => {
   assert.match(contract, /original_input.*never stored/i);
   assert.match(contract, /final success is forbidden.*unresolved or unaddressable/i);
   assert.match(contract,
-    /(?:must not|never) manually (?:assemble|build).*assignments.*model_checks/is);
+    /(?:must not|never) manually (?:assemble|build).*assignments.*dispatch_settings.*model_checks/is);
   assert.match(contract,
     /build-profile.*stdout JSON unchanged.*(?:diff-profile|proposal input)/is);
 });
@@ -194,6 +292,8 @@ test('the documented resolver commands execute from an unrelated cwd through bot
   const unrelatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'configure-tiers-doc-cwd-'));
   const resolveInputPath = path.join(scratch, 'RESOLVE_REQUEST.json');
   const sessionInputPath = path.join(scratch, 'SESSION.json');
+  const proposalInputPath = path.join(scratch, 'PROPOSAL.json');
+  const workspaceRoot = path.join(scratch, 'workspace');
   const sessionOwnedPaths = new Set();
   const commandOptions = {
     cwd: unrelatedCwd,
@@ -201,15 +301,23 @@ test('the documented resolver commands execute from an unrelated cwd through bot
       ...process.env,
       SKILL_ROOT: path.resolve(SKILL_DIR),
       SESSION_SCRATCH: path.resolve(scratch),
+      WORKSPACE_ROOT: path.resolve(workspaceRoot),
     },
   };
   const resolveCommand = documentedResolverCommand('resolve');
   const verificationCommand = documentedResolverCommand('verification-targets');
   const buildCommand = documentedResolverCommand('build-profile');
+  let diffCommand;
+  let upsertCommand;
 
   try {
+    diffCommand = documentedConfigCommand('diff-profile');
+    upsertCommand = documentedConfigCommand('upsert-profile');
     assert.equal(path.isAbsolute(commandOptions.env.SKILL_ROOT), true);
     assert.equal(path.isAbsolute(commandOptions.env.SESSION_SCRATCH), true);
+    assert.equal(path.isAbsolute(commandOptions.env.WORKSPACE_ROOT), true);
+    assert.equal(session.harness, 'copilot-cli',
+      'mixed explicit runtime settings are supported only by the CLI harness');
     const selections = Object.values(session.selections);
     const exact = selections.find((selection) => selection.resolution.state === 'exact');
     const likely = selections.find((selection) => selection.resolution.state === 'likely');
@@ -218,10 +326,18 @@ test('the documented resolver commands execute from an unrelated cwd through bot
     assert.equal(likely.confirmed, true, 'likely confirmation must be a selection sibling');
     assert.equal(Object.hasOwn(likely.resolution, 'confirmed'), false,
       'confirmed must never be nested inside resolution');
+    for (const selection of selections) {
+      assert.equal(Object.hasOwn(selection, 'reasoning_effort'), true);
+      assert.equal(Object.hasOwn(selection, 'context_tier'), true);
+    }
+    assert.ok(selections.some((selection) => selection.reasoning_effort === 'auto'));
+    assert.ok(selections.some((selection) => selection.reasoning_effort !== 'auto'));
+    assert.ok(selections.some((selection) => selection.context_tier === 'auto'));
+    assert.ok(selections.some((selection) => selection.context_tier !== 'auto'));
 
     const resolveCases = [
       [exact, exact.resolution.candidate],
-      [likely, 'GPT-5.5 Thinking XHigh Effort'],
+      [likely, `${likely.resolution.candidate} Thinking XHigh Effort`],
     ];
     for (const [selection, userInput] of resolveCases) {
       assert.equal(fs.existsSync(resolveInputPath), false,
@@ -250,16 +366,29 @@ test('the documented resolver commands execute from an unrelated cwd through bot
     const verification = JSON.parse(verificationResult.stdout);
     assert.deepEqual(Object.keys(verification.assignments), CANONICAL);
     assert.equal(Object.keys(verification.assignments).length, 5);
-    assert.deepEqual(
-      verification.verification_targets,
-      [...new Set(Object.values(verification.assignments))]
-    );
+    assert.deepEqual(Object.keys(verification.dispatch_settings), CANONICAL);
+    for (const target of verification.verification_targets) {
+      assert.deepEqual(
+        JSON.parse(target.id),
+        [target.model, target.reasoning_effort, target.context_tier]
+      );
+      assert.equal(target.dispatch_arguments.model, target.model);
+      assert.equal(
+        Object.hasOwn(target.dispatch_arguments, 'reasoning_effort'),
+        target.reasoning_effort !== 'auto'
+      );
+      assert.equal(
+        Object.hasOwn(target.dispatch_arguments, 'context_tier'),
+        target.context_tier !== 'auto'
+      );
+    }
 
-    session.probes = Object.fromEntries(verification.verification_targets.map((model, index) => [
-      model,
+    session.probes = Object.fromEntries(verification.verification_targets.map((target, index) => [
+      target.id,
       {
         ok: true,
-        requested_model: model,
+        requested_model: target.model,
+        requested_arguments: { ...target.dispatch_arguments },
         identity_observable: false,
         checked_at: new Date(Date.UTC(2026, 6, 13, 1, index)).toISOString(),
       },
@@ -271,7 +400,23 @@ test('the documented resolver commands execute from an unrelated cwd through bot
     assert.equal(profileResult.status, 0, profileResult.stderr);
     const profile = JSON.parse(profileResult.stdout);
     assert.deepEqual(profile.assignments, verification.assignments);
-    assert.deepEqual(Object.keys(profile.model_checks), verification.verification_targets);
+    assert.deepEqual(profile.dispatch_settings, verification.dispatch_settings);
+    assert.deepEqual(
+      Object.keys(profile.model_checks),
+      [...new Set(Object.values(verification.assignments))]
+    );
+    fs.writeFileSync(proposalInputPath, profileResult.stdout, { flag: 'wx' });
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    const diffResult = runDocumentedCommand(diffCommand, commandOptions);
+    assert.equal(diffResult.status, 0, diffResult.stderr);
+    const upsertResult = runDocumentedCommand(upsertCommand, commandOptions);
+    assert.equal(upsertResult.status, 0, upsertResult.stderr);
+    const stored = JSON.parse(fs.readFileSync(
+      path.join(workspaceRoot, '.10x-squad', 'model-routing.json'),
+      'utf8'
+    ));
+    assert.equal(stored.schema_version, 2);
+    assert.deepEqual(stored.harnesses['copilot-cli'].dispatch_settings, verification.dispatch_settings);
     assert.deepEqual(fs.readdirSync(unrelatedCwd), [], 'commands must not use cwd for transient files');
     assert.equal(
       resolveCommand,
@@ -284,6 +429,14 @@ test('the documented resolver commands execute from an unrelated cwd through bot
     assert.equal(
       buildCommand,
       'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"'
+    );
+    assert.equal(
+      diffCommand,
+      'node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli'
+    );
+    assert.equal(
+      upsertCommand,
+      'node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli'
     );
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
@@ -301,9 +454,41 @@ test('the skill records absolute cwd-independent scratch roots', () => {
     'node "$SKILL_ROOT/scripts/model-id-resolver.js" resolve --input "$SESSION_SCRATCH/RESOLVE_REQUEST.json"',
     'node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$SESSION_SCRATCH/SESSION.json"',
     'node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_SCRATCH/SESSION.json"',
+    'node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli',
+    'node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli',
   ]) {
     assert.ok(body.includes(command), `SKILL.md must use cwd-independent command: ${command}`);
   }
+});
+
+test('UI metadata, operator guide, and README expose the three-part tier contract', () => {
+  const metadata = readText(OPENAI_YAML);
+  const operatorGuide = readText(OPERATOR_GUIDE);
+  const readme = readText(README_MD);
+
+  assert.match(metadata, /model.*reasoning.*context/is);
+  assert.match(metadata, /\$10x-squad-configure-tiers/);
+  for (const text of [operatorGuide, readme]) {
+    assert.match(text, /work-tier.*model.*reasoning.*context/is);
+    assert.match(text, /runtime `?auto`?.*(?:omit|omits|omitted)/is);
+  }
+  assert.match(operatorGuide, /copilot-cli.*explicit.*reasoning.*context/is);
+  assert.match(operatorGuide, /copilot-vscode.*`?auto`?\s*\/\s*`?auto`?/is);
+});
+
+test('public docs promise live catalog discovery and named context tiers, not hardcoded choices or sizes', () => {
+  const contract = [
+    readSkill().body,
+    readModelResolution(),
+    readText(CONFIG_FORMAT_MD),
+    readText(OPERATOR_GUIDE),
+    readText(README_MD),
+  ].join('\n');
+
+  assert.match(contract, /never hardcode selectable model (?:names|identifiers)/i);
+  assert.match(contract, /`long_context`.*(?:harness label|named tier)/is);
+  assert.match(contract, /(?:no|never promise).*numeric context (?:size|window)/is);
+  assert.doesNotMatch(contract, /\b\d+(?:,\d{3})*\s*(?:tokens?|k[- ]?tokens?)\b/i);
 });
 
 test('model resolution defines explicit catalog adapters for both active harnesses', () => {

@@ -1,6 +1,6 @@
 # 10x-squad
 
-Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator agent) plus seven skills for GitHub Copilot: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model routing).
+Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator agent) plus seven skills for GitHub Copilot: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model, reasoning, and context routing).
 
 ```
 assets/agents/10x-squad.agent.md     Vivaldi — orchestrator custom agent
@@ -13,7 +13,7 @@ test/                                node --test suites (npm test runs full disc
 
 ## Model routing
 
-Work-tier → model assignments are user configuration, not prompt content: `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves the exact model for every persona dispatch through the installed resolver script. **Reinstalling never touches these config files.** Vivaldi's own parent model is selected manually in the harness — Copilot Auto is banned at every level. Operator guide and learning summary: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md` (Copilot CLI executed identity proven; VS Code catalog discovery and addressability proven, executed identity still unverified).
+Each work-tier profile combines one exact model, one reasoning choice, and one context choice. `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves that profile for every persona dispatch through the installed resolver script. Runtime `auto` omits only its corresponding dispatch argument; it is not Copilot model Auto or parent inheritance. Explicit reasoning/context values are supported only by Copilot CLI today; VS Code and unknown harnesses allow `auto`/`auto` only. **Reinstalling never touches these config files.** Operator guide and learning summary: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md`.
 
 ## The source-of-truth rule
 

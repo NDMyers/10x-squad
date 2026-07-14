@@ -11,7 +11,7 @@ Acquire one catalog for the active harness and retain this shape in session stat
   "harness": "copilot-vscode",
   "source": "harness",
   "checked_at": "2026-07-13T00:00:00.000Z",
-  "models": ["GPT-5.5 (copilot)", "GPT-5.4 (copilot)"],
+  "models": ["example-model-alpha", "example-model-beta"],
   "excluded": [{"model":"Auto (copilot)","reason":"squad invariant: Auto banned"}]
 }
 ```
@@ -44,7 +44,18 @@ The only states are `exact`, `likely`, `ambiguous`, `no_match`, and `banned`; ne
 - `no_match` shows the full selectable list and stops pending an exact choice or cancel.
 - `banned` stops.
 
-Ambiguous and `no_match` stop before preview/write; `banned` cannot proceed either. Effort, thinking, and reasoning words express user intent only. The routing schema has no reasoning-effort field.
+Ambiguous and `no_match` stop before preview/write; `banned` cannot proceed either. Model catalog discovery and model intent resolution remain model-only. Effort, thinking, and reasoning words in free text may be removable model-matching noise, but they never set runtime choices. Collect runtime choices separately as selection siblings.
+
+## Runtime-setting contract
+
+Each resolved model selection also needs explicit-or-`auto` choices for `reasoning_effort` and `context_tier`:
+
+- `reasoning_effort`: `auto|low|medium|high|xhigh`
+- `context_tier`: `auto|default|long_context`
+
+`auto` means independently omit that corresponding dispatch parameter and allow the active harness's adaptive or default behavior. It is not Copilot model Auto and is not parent inheritance. `long_context` is the harness's named tier; never promise a numeric context size.
+
+Only `copilot-cli` supports explicit values. For `copilot-vscode` or an unknown harness, `auto`/`auto` remains allowed. If either setting is explicit, hard-stop before any probe, preview, or write.
 
 ## Executable resolver and probe contract
 
@@ -62,27 +73,27 @@ Require exit 0 and exactly one JSON object. Malformed output or exit 2 stops. Re
 
 Remove `RESOLVE_REQUEST.json` in a per-invocation `finally` before preparing the next model intent. The outer unconditional cleanup remains responsible for interruption or other abnormal exits.
 
-Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `$SESSION_SCRATCH/SESSION.json` with exclusive creation and the fields `harness`, `catalog`, and `selections`. Each `selections[tier]` is a wrapper: `selections[tier].resolution` is the entire, unmodified single JSON object returned by that tier's `resolve` invocation. An exact wrapper is `{"resolution": <resolve stdout>}`. A likely wrapper is `{"resolution": <resolve stdout>, "confirmed": true}` only after affirmative confirmation; `confirmed` is a sibling of `resolution`, never nested inside it.
+Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `$SESSION_SCRATCH/SESSION.json` with exclusive creation and the fields `harness`, `catalog`, and `selections`. Each `selections[tier]` is a wrapper: `selections[tier].resolution` is the entire, unmodified single JSON object returned by that tier's `resolve` invocation. Add canonical `reasoning_effort` and `context_tier` siblings. For a likely match, add `confirmed: true` only after affirmative confirmation; `confirmed` is a sibling of `resolution`, never nested inside it. Every new session carries both settings on all five selections, including explicit `auto` values.
 
 This complete session is executable as written:
 
 <!-- executable-session-example:start -->
 ```json
 {
-  "harness": "copilot-vscode",
+  "harness": "copilot-cli",
   "catalog": {
-    "harness": "copilot-vscode",
+    "harness": "copilot-cli",
     "source": "harness",
     "checked_at": "2026-07-13T00:00:00.000Z",
-    "models": ["GPT-5.5 (copilot)"],
+    "models": ["example-model-alpha", "example-model-beta"],
     "excluded": []
   },
   "selections": {
-    "trivial": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}},
-    "lite": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}},
-    "standard_clear": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"likely","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":true},"confirmed":true},
-    "standard_ambiguous": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}},
-    "complex": {"resolution":{"harness":"copilot-vscode","selectable_models":["GPT-5.5 (copilot)"],"excluded":[],"state":"exact","candidate":"GPT-5.5 (copilot)","candidates":["GPT-5.5 (copilot)"],"requires_confirmation":false}}
+    "trivial": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},"reasoning_effort":"auto","context_tier":"auto"},
+    "lite": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},"reasoning_effort":"low","context_tier":"auto"},
+    "standard_clear": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"likely","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":true},"confirmed":true,"reasoning_effort":"auto","context_tier":"long_context"},
+    "standard_ambiguous": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-beta","candidates":["example-model-beta"],"requires_confirmation":false},"reasoning_effort":"medium","context_tier":"default"},
+    "complex": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},"reasoning_effort":"xhigh","context_tier":"long_context"}
   }
 }
 ```
@@ -96,7 +107,13 @@ node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$S
 ```
 <!-- resolver-command:verification-targets:end -->
 
-Require exit 0, exactly five assignments, and deduplicated `verification_targets`. Verification is deduplicated by unique identifier. Probe each target once with the exact prompt specified in `SKILL.md`, then update only this session-owned `SESSION.json` to add raw observations under `probes[requested_model]`: `ok`, `requested_model`, `identity_observable`, `checked_at`, and any observed `executed_model` or failure `error`.
+Require exit 0, exactly five assignments, all five `dispatch_settings` entries, and deduplicated `verification_targets`. Verification is deduplicated by the complete tuple `(model, reasoning_effort, context_tier)`. The same model with different settings therefore produces different targets. Each target has this resolver-owned shape:
+
+```json
+{"id":"[\"example-model-alpha\",\"auto\",\"long_context\"]","model":"example-model-alpha","reasoning_effort":"auto","context_tier":"long_context","dispatch_arguments":{"model":"example-model-alpha","context_tier":"long_context"}}
+```
+
+For each target, invoke the harmless probe using exactly `target.dispatch_arguments` plus the exact prompt specified in `SKILL.md`. Never reconstruct the arguments and never add an omitted `auto` field. Store one raw observation under `probes[target.id]`; copy the exact object to `requested_arguments` alongside raw observation fields `ok`, `requested_model`, `identity_observable`, `checked_at`, and any observed `executed_model` or failure `error`. The tuple ID, not a model string, is the probe key.
 
 Every successful probe explicitly includes `identity_observable: true` or `false`. `true` also requires `executed_model`; `false` omits it. Missing `executed_model` alone must NEVER be inferred as unobservable. A missing observability flag is a gate error.
 
@@ -108,9 +125,23 @@ node "$SKILL_ROOT/scripts/model-id-resolver.js" build-profile --input "$SESSION_
 ```
 <!-- resolver-command:build-profile:end -->
 
-Require exit 0 and exactly one stdout JSON object. Pass its stdout JSON UNCHANGED as proposal input to `validate-profile` (if used), `diff-profile`, and `upsert-profile`. The skill must not manually assemble `assignments` or `model_checks`. Only exact active-catalog strings enter `assignments`; `original_input` is never stored.
+Require exit 0 and exactly one stdout JSON object. `build-profile` is the sole proposal builder: the skill must not manually assemble or modify `assignments`, `dispatch_settings`, or `model_checks`. Save its stdout JSON unchanged, by exclusive creation, as `$SESSION_SCRATCH/PROPOSAL.json`. Pass those exact bytes as proposal input to `validate-profile` (if used), `diff-profile`, and `upsert-profile`. Only exact active-catalog strings enter `assignments`; `original_input` is never stored.
 
-Cleanup runs unconditionally in a `finally-style` path on success, cancellation, hard-block/stop, error, or interruption: remove `RESOLVE_REQUEST.json`, `SESSION.json`, transient proposals, and then the session-owned scratch directory. Never create the scratch directory under `.10x-squad`, overwrite anything pre-existing, or commit it.
+For the executable Copilot CLI workspace example, bind an absolute `WORKSPACE_ROOT`, then preview and upsert the same proposal:
+
+<!-- config-command:diff-profile:start -->
+```sh
+node "$SKILL_ROOT/scripts/model-tier-config.js" diff-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli
+```
+<!-- config-command:diff-profile:end -->
+
+<!-- config-command:upsert-profile:start -->
+```sh
+node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION_SCRATCH/PROPOSAL.json" --scope workspace --workspace-root "$WORKSPACE_ROOT" --harness copilot-cli
+```
+<!-- config-command:upsert-profile:end -->
+
+Cleanup runs unconditionally in a `finally-style` path on success, cancellation, hard-block/stop, error, or interruption: remove `RESOLVE_REQUEST.json`, `SESSION.json`, `PROPOSAL.json`, other transient proposals, and then the session-owned scratch directory. Never create the scratch directory under `.10x-squad`, overwrite anything pre-existing, or commit it.
 
 ## Evidence gate
 
@@ -118,7 +149,9 @@ Cleanup runs unconditionally in a `finally-style` path on success, cancellation,
 
 | Observation | Status | Method | Gate |
 |---|---|---|---|
-| Requested/executed identities observable and byte-equal | `verified` | `dispatch_smoke_test` | May proceed |
+| Requested/executed identities observable and byte-equal, and requested arguments match the target | `verified` | `dispatch_smoke_test` | May proceed |
 | Launch succeeds but identity is not independently observable | `unverified` | `addressability_probe` | May proceed with explicit warning |
 | Catalog membership only | no check | none | Must still probe |
 | Invalid/unavailable/policy rejection/mismatch | no write | none | Stop |
+
+Never hardcode selectable model names or identifiers. Always acquire them through the unchanged active-harness catalog adapters above.
