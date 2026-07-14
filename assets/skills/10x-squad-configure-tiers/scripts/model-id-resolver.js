@@ -10,6 +10,7 @@ const INHERIT = /^inherit(?:\s*\([^)]*\))?$/iu;
 const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 const REASONING_EFFORTS = ['auto', 'low', 'medium', 'high', 'xhigh'];
 const CONTEXT_TIERS = ['auto', 'default', 'long_context'];
+const EXPLICIT_DISPATCH_HARNESSES = new Set(['copilot-cli']);
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -265,9 +266,22 @@ function uniqueVerificationTargets(assignments, dispatchSettings) {
   return targets;
 }
 
+function assertHarnessSupportsDispatchSettings(harness, dispatchSettings) {
+  const hasExplicitSetting = TIER_KEYS.some((tier) => (
+    dispatchSettings[tier].reasoning_effort !== 'auto'
+    || dispatchSettings[tier].context_tier !== 'auto'
+  ));
+  if (hasExplicitSetting && !EXPLICIT_DISPATCH_HARNESSES.has(harness)) {
+    throw new Error(
+      `harness ${JSON.stringify(harness)} does not support explicit runtime settings`
+    );
+  }
+}
+
 function verificationPlan(request) {
   const assignments = resolvedAssignments(request);
   const dispatchSettings = resolvedDispatchSettings(request.selections);
+  assertHarnessSupportsDispatchSettings(request.harness, dispatchSettings);
   return {
     assignments,
     dispatch_settings: dispatchSettings,

@@ -466,6 +466,67 @@ test('omitted selection settings default to auto and auto arguments are omitted'
   assert.deepEqual(result.verification_targets[0].dispatch_arguments, { model });
 });
 
+test('verification plan rejects explicit settings for unsupported harnesses', () => {
+  const model = 'gpt-5.4';
+  const unsupportedHarnesses = [
+    'copilot-vscode',
+    'unknown-surface',
+    'copilot-cli-preview',
+  ];
+  const explicitSettings = [
+    ['low', 'auto'],
+    ['auto', 'default'],
+  ];
+
+  for (const harness of unsupportedHarnesses) {
+    for (const [reasoningEffort, contextTier] of explicitSettings) {
+      const selections = fiveSelections(model);
+      selections.complex = exactSelection(
+        model,
+        reasoningEffort,
+        contextTier
+      );
+      assert.throws(
+        () => verificationPlan({
+          harness,
+          catalog: catalog([model], harness),
+          selections,
+        }),
+        new RegExp(
+          `harness ${JSON.stringify(harness)} does not support explicit runtime settings`
+        )
+      );
+    }
+  }
+});
+
+test('unsupported harnesses still allow automatic runtime settings', () => {
+  const model = 'gpt-5.4';
+
+  for (const harness of ['copilot-vscode', 'unknown-surface']) {
+    const plan = verificationPlan({
+      harness,
+      catalog: catalog([model], harness),
+      selections: fiveSelections(model),
+    });
+
+    assert.deepEqual(plan.verification_targets, [expectedTarget(model)]);
+  }
+});
+
+test('copilot-cli allows explicit reasoning and context settings', () => {
+  const model = 'gpt-5.4';
+  const plan = verificationPlan({
+    harness: 'copilot-cli',
+    catalog: catalog([model], 'copilot-cli'),
+    selections: fiveSelections(model, 'xhigh', 'default'),
+  });
+
+  assert.deepEqual(plan.verification_targets, [
+    expectedTarget(model, 'xhigh', 'default'),
+  ]);
+});
+
 test('verification targets deduplicate full tuples but keep settings variants', () => {
   const model = 'gpt-5.4';
   const selections = {
@@ -548,6 +609,38 @@ test('invalid settings fail before profile probe construction', () => {
     () => buildResolvedProfile(request),
     /context_tier must be one of auto, default, long_context/
   );
+});
+
+test('profile builder rejects unsupported explicit settings before reading probes', () => {
+  const model = 'gpt-5.4';
+  const cases = [
+    ['copilot-vscode', 'medium', 'auto'],
+    ['unknown-surface', 'auto', 'default'],
+  ];
+
+  for (const [harness, reasoningEffort, contextTier] of cases) {
+    const selections = fiveSelections(model);
+    selections.standard_ambiguous = exactSelection(
+      model,
+      reasoningEffort,
+      contextTier
+    );
+    const request = {
+      harness,
+      catalog: catalog([model], harness),
+      selections,
+    };
+    Object.defineProperty(request, 'probes', {
+      get() {
+        assert.fail('probes must not be read for unsupported explicit settings');
+      },
+    });
+
+    assert.throws(
+      () => buildResolvedProfile(request),
+      /does not support explicit runtime settings/
+    );
+  }
 });
 
 test('profile builder returns complete assignments settings and model checks', () => {
@@ -945,6 +1038,36 @@ test('catalog exclusions accept only canonical forbidden records', () => {
       () => prepareCatalog({ ...catalog(['GPT-5.5']), excluded }, 'copilot-vscode'),
       /catalog excluded must contain canonical forbidden records/
     );
+  }
+});
+
+test('CLI verification-targets rejects unsupported explicit settings without output', () => {
+  const model = 'gpt-5.4';
+  const cases = [
+    ['copilot-vscode', 'high', 'auto'],
+    ['copilot-vscode', 'auto', 'default'],
+    ['unknown-surface', 'high', 'auto'],
+    ['unknown-surface', 'auto', 'default'],
+  ];
+
+  for (const [harness, reasoningEffort, contextTier] of cases) {
+    const selections = fiveSelections(model);
+    selections.lite = exactSelection(model, reasoningEffort, contextTier);
+    const requestPath = writeRequest({
+      harness,
+      catalog: catalog([model], harness),
+      selections,
+    });
+    const result = runResolver([
+      'verification-targets',
+      '--input',
+      requestPath,
+    ]);
+
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /does not support explicit runtime settings/u);
+    assert.equal(result.stderr.trim().split('\n').length, 1);
   }
 });
 
