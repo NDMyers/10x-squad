@@ -13,7 +13,7 @@ test/                                node --test suites (npm test runs full disc
 
 ## Model routing
 
-Work-tier → model assignments are user configuration, not prompt content: `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves the exact model for every persona dispatch through the installed resolver script. **Reinstalling never touches these config files.** Vivaldi's own parent model is selected manually in the harness — Copilot Auto is banned at every level. Operator guide: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md` (Copilot CLI proven; VS Code pending its manual probe).
+Work-tier → model assignments are user configuration, not prompt content: `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves the exact model for every persona dispatch through the installed resolver script. **Reinstalling never touches these config files.** Vivaldi's own parent model is selected manually in the harness — Copilot Auto is banned at every level. Operator guide and learning summary: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md` (Copilot CLI executed identity proven; VS Code catalog discovery and addressability proven, executed identity still unverified).
 
 ## The source-of-truth rule
 
