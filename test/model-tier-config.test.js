@@ -891,9 +891,76 @@ test('upsert-profile: global scope writes under XDG_CONFIG_HOME', () => {
     { env: sb.env }
   );
   assert.equal(r.code, 0, r.stderr);
+  const output = JSON.parse(r.stdout);
+  assert.deepEqual(output.effective_after, mkAssignments('gm'));
+  assert.deepEqual(output.effective_dispatch_settings_after, mkDispatchSettings());
+
   const cfg = JSON.parse(fs.readFileSync(sb.globalFile, 'utf8'));
   assert.equal(cfg.harnesses['copilot-cli'].assignments.complex, 'gm');
   assert.deepEqual(cfg.harnesses['copilot-cli'].dispatch_settings, mkDispatchSettings());
+
+  const resolvedRun = runCli(
+    ['resolve', '--workspace-root', sb.root, '--harness', 'copilot-cli', '--tier', 'complex', '--json'],
+    { env: sb.env }
+  );
+  assert.equal(resolvedRun.code, 0, resolvedRun.stderr);
+  const resolved = JSON.parse(resolvedRun.stdout);
+  assert.equal(resolved.scope, 'global');
+  assert.equal(resolved.model, output.effective_after.complex);
+  assert.equal(resolved.reasoning_effort, output.effective_dispatch_settings_after.complex.reasoning_effort);
+  assert.equal(resolved.context_tier, output.effective_dispatch_settings_after.complex.context_tier);
+});
+
+test('upsert-profile: global write reports an existing workspace profile as effective', () => {
+  const sb = sandbox();
+  const workspace = mkConfig({ 'copilot-cli': 'workspace-m' });
+  workspace.schema_version = 2;
+  workspace.harnesses['copilot-cli'].dispatch_settings = mkDispatchSettings('low', 'default');
+  writeJson(sb.wsFile, workspace);
+  const workspaceBefore = fs.readFileSync(sb.wsFile, 'utf8');
+  writeJson(sb.globalFile, mkConfig({ 'copilot-cli': 'old-global-m' }));
+
+  const proposal = path.join(sb.root, 'proposal.json');
+  writeJson(proposal, mkProfile('new-global-m', {
+    dispatch_settings: mkDispatchSettings('xhigh', 'long_context'),
+  }));
+  const r = runCli(
+    ['upsert-profile', '--input', proposal, '--scope', 'global', '--workspace-root', sb.root, '--harness', 'copilot-cli'],
+    { env: sb.env }
+  );
+  assert.equal(r.code, 0, r.stderr);
+
+  const output = JSON.parse(r.stdout);
+  assert.deepEqual(output.effective_after, mkAssignments('workspace-m'));
+  assert.deepEqual(
+    output.effective_dispatch_settings_after,
+    mkDispatchSettings('low', 'default')
+  );
+
+  const storedGlobal = JSON.parse(fs.readFileSync(sb.globalFile, 'utf8'));
+  assert.deepEqual(storedGlobal.harnesses['copilot-cli'].assignments, mkAssignments('new-global-m'));
+  assert.deepEqual(
+    storedGlobal.harnesses['copilot-cli'].dispatch_settings,
+    mkDispatchSettings('xhigh', 'long_context')
+  );
+  assert.equal(fs.readFileSync(sb.wsFile, 'utf8'), workspaceBefore);
+
+  const resolvedRun = runCli(
+    ['resolve', '--workspace-root', sb.root, '--harness', 'copilot-cli', '--tier', 'standard_ambiguous', '--json'],
+    { env: sb.env }
+  );
+  assert.equal(resolvedRun.code, 0, resolvedRun.stderr);
+  const resolved = JSON.parse(resolvedRun.stdout);
+  assert.equal(resolved.scope, 'workspace');
+  assert.equal(resolved.model, output.effective_after.standard_ambiguous);
+  assert.equal(
+    resolved.reasoning_effort,
+    output.effective_dispatch_settings_after.standard_ambiguous.reasoning_effort
+  );
+  assert.equal(
+    resolved.context_tier,
+    output.effective_dispatch_settings_after.standard_ambiguous.context_tier
+  );
 });
 
 test('upsert-profile: persists __proto__ as a literal own harness key', () => {

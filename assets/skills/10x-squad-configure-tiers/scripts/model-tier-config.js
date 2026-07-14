@@ -560,8 +560,15 @@ function cmdUpsertProfile(flags) {
   if (!check.ok) fail(EXIT.CONFIG, `Invalid profile for ${flags.harness}: ${check.errors.join('; ')}`);
 
   const existing = readOrFail(target);
+  const workspaceConfig = flags.scope === 'global' && paths.workspace
+    ? readOrFail(paths.workspace)
+    : null;
   const next = upsertProfile(existing, flags.harness, proposal, new Date().toISOString());
-  const nextProfile = ownHarnessProfile(next, flags.harness);
+  const simulated = effectiveProfile({
+    workspaceConfig: flags.scope === 'workspace' ? next : workspaceConfig,
+    globalConfig: flags.scope === 'global' ? next : null,
+    harness: flags.harness,
+  });
   try {
     atomicWriteJson(target, next);
   } catch (err) {
@@ -572,8 +579,8 @@ function cmdUpsertProfile(flags) {
     scope: flags.scope,
     harness: flags.harness,
     path: target,
-    effective_after: { ...nextProfile.assignments },
-    effective_dispatch_settings_after: effectiveDispatchSettings(nextProfile),
+    effective_after: { ...simulated.profile.assignments },
+    effective_dispatch_settings_after: effectiveDispatchSettings(simulated.profile),
   });
   process.exit(EXIT.OK);
 }
