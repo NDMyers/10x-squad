@@ -1,7 +1,7 @@
 # Harness Spike — Explicit Per-Dispatch Subagent Model Routing
 
 **Plan:** `docs/plans/2026-07-13-configurable-work-tier-model-routing.md` (Task 0)
-**Started:** 2026-07-13 (Claude Fable 5) · **Status: GATE PASSED for `copilot-cli` (all three pre-registered criteria, direct evidence below). For `copilot-vscode`, failure-path catalog discovery is observed; the verified exact-routing gate has not passed because there is no independent post-launch executed-model identity signal.**
+**Started:** 2026-07-13 (Claude Fable 5) · **Status: GATE PASSED for `copilot-cli` (all three pre-registered criteria, direct evidence below). For `copilot-vscode`, live catalog discovery and exact-label addressability are observed; the verified exact-routing gate has not passed because the agent-visible probe result has no independent post-launch executed-model identity signal.**
 
 ## Pre-registered evidence criteria (fixed 2026-07-13, before any probe ran)
 
@@ -18,8 +18,9 @@
 | Copilot CLI | 1.0.70 (binary self-updated from 1.0.69 during spike; auto-update active) |
 | Node | v20.19.0 |
 | Parent model selection | `~/.copilot/settings.json` currently `{"model": "auto"}` — **violates invariant 12 premise; user must select an explicit model before squad runs** |
+| VS Code forward-run parent | `GPT-5.5`, `Extra High 1M`, explicitly selected and non-Auto |
 | Enterprise experiment flags (from `~/.copilot/config.json` assignment cache) | `gpt-default`, `copilot_cli_gpt_5_4_for_subagents`, `copilot_cli_gpt_5_4_mini_for_explore`, `copilot_cli_opus_medium_effort_default` — **server-side experiments actively steer default subagent models** |
-| Workspace trust / enterprise policy | not recorded by the VS Code catalog-discovery observation (forward test remains) |
+| VS Code workspace trust / enterprise policy | No Restricted Mode prompt/banner was observed; the custom agent, terminal commands, and `runSubagent` were available, consistent with a trusted disposable workspace. No enterprise model-policy rejection occurred. |
 
 ## Copilot CLI findings (2026-07-13)
 
@@ -94,9 +95,9 @@ Debug log: `No model backend (auth, legacy provider, or BYOK registry) available
 
 A live `runSubagent` call with the descriptive identifier `GPT-5.4 Thinking Medium Effort for trivial work` was rejected before child launch and returned the active session's selectable model list. `Auto (copilot)` appeared in that list but remains banned. This proves a failure-path catalog discovery mechanism for that authenticated, entitled session only; it does not prove that a valid requested model launches or identify the model that ultimately executes.
 
-A successful exact-model no-op can prove addressability. The current repository has no automated, independent post-launch executed-model identity signal for VS Code, so launch success alone cannot prove identity or the absence of substitution. The official [VS Code subagent documentation](https://code.visualstudio.com/docs/agents/subagents#_select-the-model-for-a-subagent) states that a requested subagent model above the main (parent) model's cost tier falls back to the main model; the documentation does not establish whether that fallback is independently observable through this repository's `runSubagent` path.
+A successful exact-model no-op can prove addressability. The Task 7 run later observed an internal post-launch diagnostic slug, but the agent-visible result has no canonical `executed_model` or requested-versus-executed comparison. Launch success alone therefore cannot prove byte-equal identity or the absence of substitution. The official [VS Code subagent documentation](https://code.visualstudio.com/docs/agents/subagents#_select-the-model-for-a-subagent) states that a requested subagent model above the main (parent) model's cost tier falls back to the main model; the documentation does not establish an agent-visible fallback distinction through this repository's `runSubagent` path.
 
-Remaining forward checks require the VS Code chat UI:
+The Task 7 forward run below exercised items 1–5 of this VS Code chat UI path. Item 6 is a separate persona-implementation residual check and was outside this no-side-effect configure-tiers run:
 
 1. Select an explicit (non-Auto) parent model in the model picker; open the 10x-squad custom agent.
 2. Ask Vivaldi to `runSubagent` with an exact active-catalog model and the prompt "return MODEL_ROUTE_OK and make no edits"; launch success proves addressability.
@@ -105,7 +106,53 @@ Remaining forward checks require the VS Code chat UI:
 5. Record workspace trust state and any enterprise model-policy effects.
 6. Check whether the child can execute a persona skill's implementation duty (no parent "no-code" inheritance).
 
-## Step 5 — Unattended resolver: mechanism verified (CLI); VS Code terminal-tool execution remains a forward test.
+## Task 7 — VS Code configure-tiers forward run: **COMPLETED 2026-07-13 (PDT)**
+
+This was a signed-in Copilot Business session in a trusted, session-owned disposable workspace. VS Code was `1.128.0` (`fc3def6774c76082adf699d366f31a557ce5573f`), Copilot Chat was `0.56.0`, and the parent picker showed `GPT-5.5` with `Extra High 1M` rather than Auto. The run installed the current branch assets, began without a routing profile, and wrote only the disposable workspace's `.10x-squad/model-routing.json` after `diff-profile`.
+
+The impossible-model `runSubagent` adapter returned this active-session catalog, in order:
+
+```text
+Claude Opus 4.6 (copilot)
+Claude Opus 4.7 (copilot)
+Claude Opus 4.8 (copilot)
+Claude Sonnet 4.6 (copilot)
+Gemini 3.1 Pro (Preview) (copilot)
+Gemini 3.5 Flash (copilot)
+GPT-5.3-Codex (copilot)
+GPT-5.4 mini (copilot)
+GPT-5.4 (copilot)
+GPT-5.5 (copilot)
+MAI-Code-1-Flash (copilot)
+GPT-5 mini (copilot)
+Claude Sonnet 4.5 (copilot)
+Claude Opus 4.5 (copilot)
+Claude Haiku 4.5 (copilot)
+Gemini 3 Flash (Preview) (copilot)
+Gemini 2.5 Pro (copilot)
+```
+
+`Auto (copilot)` was the final item in the same surface-provided list; the adapter separated and retained it as excluded with reason `squad invariant: Auto banned`.
+
+| # | Scenario | Live observation |
+|---|---|---|
+| 1 | Exact | `GPT-5.5 (copilot)` returned `exact`, preserved the exact catalog string, and required no match confirmation. |
+| 2 | Likely | `GPT-5.5 Thinking XHigh Effort` returned one `likely` candidate, `GPT-5.5 (copilot)`; the pre-authorized affirmative confirmation was applied. |
+| 3 | Base versus mini | Both `GPT-5.4 (copilot)` and `GPT-5.4 mini (copilot)` were present. `GPT 5.4 Thinking Xhigh Effort` returned only base `GPT-5.4 (copilot)` as the likely candidate; mini was not selected. |
+| 4 | No match | `Sol Ultra` returned `no_match`, no candidates, and the full active selectable list. No preview or write used this result. |
+| 5 | Auto | `Auto (copilot)` returned `banned` with `squad invariant: Auto banned`. No preview or write used this result. |
+| 6 | Deduplication | All five tiers resolved exactly to `GPT-5.5 (copilot)`; `verification-targets` returned one unique target and exactly one verification probe ran. The rejected catalog-discovery attempt was a separate `runSubagent` call. |
+| 7 | Addressability-only | The exact harmless probe returned `MODEL_ROUTE_OK`, but its agent-visible result exposed no separate requested/executed identity fields. Internal child and extension diagnostics labeled the post-launch request `gpt-5.5`; that non-canonical slug could not be byte-compared with `GPT-5.5 (copilot)`, and because the parent was also GPT-5.5 it could not distinguish explicit child selection from parent fallback. The session therefore recorded `identity_observable: false`, `unverified`, and `addressability_probe`, with the required warning. |
+| 8 | Mismatch/policy fallback | **Skipped/unverified.** The fixed parent session and successful probe surface did not expose a safe lower-cost-parent/higher-cost-child pair without changing parent state or forcing a mismatch. No pass is claimed; injected mismatch tests remain the acceptance proof. |
+| 9 | Post-write | The resolver built the profile, `diff-profile` previewed it, `upsert-profile` wrote the disposable workspace profile, and all five tier keys resolved to `GPT-5.5 (copilot)` from `workspace` scope with `unverified` status and `addressability_probe` method. |
+
+The selected identifier was `GPT-5.5 (copilot)`. The exact probe call used `Reply with exactly MODEL_ROUTE_OK. Do not read files, write files, or invoke tools.` and returned `MODEL_ROUTE_OK`. The debug tool-call record captured the requested argument `model: GPT-5.5 (copilot)`; the completed serialized UI record exposed only `modelName: GPT-5.5` plus the text result, with no independent `executed_model` field. The child debug log recorded `chat:gpt-5.5` with `debugName: tool/runSubagent`, and the extension log independently recorded `[tool/runSubagent] success | gpt-5.5`; these internal diagnostics prove a GPT-5.5 request ran, but not canonical identifier equality or the absence of same-model parent fallback. They were not promoted to contract-usable executed identity. The profile therefore correctly remains addressability-only rather than verified.
+
+Post-write resolution result for `trivial`, `lite`, `standard_clear`, `standard_ambiguous`, and `complex`: exact model `GPT-5.5 (copilot)`, scope `workspace`, status `unverified`, method `addressability_probe`. No source or repository files changed during the external run.
+
+## Step 5 — Unattended resolver: mechanism verified on CLI; VS Code execution observed
+
+CLI evidence remains Probe D above. In the pre-authorized VS Code Task 7 run, the custom agent executed the installed Node resolver, `verification-targets`, `build-profile`, `diff-profile`, `upsert-profile`, and five post-write `resolve` commands. No interactive approval appeared after the initial comprehensive authorization, but the serialized substantive terminal invocations carry confirmation metadata. This run therefore proves command execution, not a general unattended approval-policy mechanism; that VS Code policy boundary remains unestablished. A failed/declined terminal invocation remains a hard stop by contract.
 
 ## Step 6 — Global-config readability
 
@@ -120,9 +167,9 @@ CLI: Probe D proved that an allowlisted Node command can run unattended; it did 
 | Gate requirement | CLI | VS Code |
 |---|---|---|
 | Active-session catalog discovery | ✅ invalid `task` model error enumerates entitled models (Probe B2) | ✅ invalid `runSubagent` identifier rejected before launch and returned selectable labels |
-| Explicit per-dispatch selection | ✅ `task` tool `model` argument (Probe B) | `runSubagent` processes the model parameter; each valid label still requires an exact-model no-op |
-| Executed-model identity observable (criteria §1) | ✅ turn/subagent events | no automated, independent post-launch signal in this repository; addressability-only success stays unverified |
-| Resolver runs unattended | ✅ D1; denial visible D2 | not established; forward test remains |
+| Explicit per-dispatch selection | ✅ `task` tool `model` argument (Probe B) | ✅ exact `GPT-5.5 (copilot)` label was accepted/addressable and the no-op returned `MODEL_ROUTE_OK`; this is not executed-identity proof |
+| Executed-model identity observable (criteria §1) | ✅ turn/subagent events | internal diagnostics labeled the request `gpt-5.5`, but no canonical agent-visible `executed_model` or fallback distinction; addressability-only success stays unverified |
+| Resolver runs unattended | ✅ D1; denial visible D2 | commands completed in the pre-authorized Task 7 session, but invocation confirmation metadata prevents a general unattended-policy claim |
 
 Consequences: `copilot-cli` remains the proven exact-routing surface. `copilot-vscode` configuration may complete after a successful no-op, but without independent identity evidence it records `unverified` / `addressability_probe` and emits a loud warning. An identity-observable probe records `verified` / `dispatch_smoke_test` only when requested and executed identifiers are byte-equal. Invalid or unavailable identifiers and observed mismatches or fallbacks hard-block before write. Do not claim the VS Code exact-routing gate or AC12 identity criterion has passed without that evidence.
 
