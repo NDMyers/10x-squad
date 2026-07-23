@@ -1,0 +1,2 @@
+name: 10x-squad-vivaldi
+description: "Use when the user invokes the 10x Squad development pipeline for feature development, bug fixes, refactors, or architectural changes. Vivaldi triages the request, routes atomic tasks to persona subagents (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph), and enforces the traceability and review gates."

@@ -8,15 +8,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { composeVivaldi } = require('../lib/compose');
 
-const AGENT_MD = path.join(__dirname, '..', 'assets', 'agents', '10x-squad.agent.md');
 const RESOLVER_PATH = '.github/skills/10x-squad-configure-tiers/scripts/model-tier-config.js';
 const CANONICAL = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 
 function readAgent() {
-  const raw = fs.readFileSync(AGENT_MD, 'utf8');
+  const raw = composeVivaldi('copilot');
   const m = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   assert.ok(m, 'agent file must have YAML frontmatter');
   return { frontmatter: m[1], body: m[2] };

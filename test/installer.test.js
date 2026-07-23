@@ -33,19 +33,39 @@ function walkFiles(dir) {
   return out;
 }
 
-const assets = [
-  {
-    source: path.join(packageRoot, 'assets', 'agents', '10x-squad.agent.md'),
-    target: path.join('.github', 'agents', '10x-squad.agent.md'),
-  },
-  ...skillNames.flatMap((skillName) => {
+const { composeVivaldi } = require('../lib/compose');
+
+function skillAssets(skillsRoot) {
+  return skillNames.flatMap((skillName) => {
     const skillDir = path.join(packageRoot, 'assets', 'skills', skillName);
     return walkFiles(skillDir).map((source) => ({
       source,
-      target: path.join('.github', 'skills', skillName, path.relative(skillDir, source)),
+      target: path.join(skillsRoot, skillName, path.relative(skillDir, source)),
     }));
-  }),
-];
+  });
+}
+
+// Mirrors lib/installer.js's per-harness manifest literally, so a manifest
+// change has to be made in two places on purpose rather than drift silently.
+const harnessAssets = {
+  copilot: [
+    { contents: () => composeVivaldi('copilot'), target: path.join('.github', 'agents', '10x-squad.agent.md') },
+    ...skillAssets(path.join('.github', 'skills')),
+  ],
+  codex: [
+    {
+      contents: () => composeVivaldi('codex'),
+      target: path.join('.agents', 'skills', '10x-squad-vivaldi', 'SKILL.md'),
+    },
+    {
+      source: path.join(packageRoot, 'assets', 'vivaldi', 'openai.yaml'),
+      target: path.join('.agents', 'skills', '10x-squad-vivaldi', 'agents', 'openai.yaml'),
+    },
+    ...skillAssets(path.join('.agents', 'skills')),
+  ],
+};
+
+const assets = [...harnessAssets.copilot, ...harnessAssets.codex];
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-installer-'));
@@ -61,11 +81,14 @@ function runCli(args, cwd) {
   return result;
 }
 
-function assertInstalledAssets(workspace) {
-  for (const asset of assets) {
-    const sourceContent = fs.readFileSync(asset.source, 'utf8');
+function expectedContent(asset) {
+  return asset.contents ? asset.contents() : fs.readFileSync(asset.source, 'utf8');
+}
+
+function assertInstalledAssets(workspace, expected = assets) {
+  for (const asset of expected) {
     const targetContent = fs.readFileSync(path.join(workspace, asset.target), 'utf8');
-    assert.equal(targetContent, sourceContent, asset.target);
+    assert.equal(targetContent, expectedContent(asset), asset.target);
   }
 }
 
@@ -175,7 +198,7 @@ test('every nested skill resource is copied byte-for-byte', () => {
 });
 
 test('asset enumeration is deterministic and sorted within each skill', () => {
-  const script = "process.stdout.write(JSON.stringify(require('./lib/installer.js').assets.map((a) => a.target)))";
+  const script = "process.stdout.write(JSON.stringify(require('./lib/installer.js').assetsFor('all').map((a) => a.target)))";
   const runs = [0, 1].map(() => {
     const result = spawnSync(process.execPath, ['-e', script], { cwd: packageRoot, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
@@ -183,11 +206,16 @@ test('asset enumeration is deterministic and sorted within each skill', () => {
   });
   assert.equal(runs[0], runs[1]);
 
+  // Sortedness is a per-skill-directory invariant. Each harness installs the
+  // same skills under its own root, so scope the check to one root at a time.
   const targets = JSON.parse(runs[0]);
-  for (const skillName of skillNames) {
-    const inSkill = targets.filter((t) => t.includes(path.join('skills', skillName) + path.sep));
-    assert.ok(inSkill.length >= 1, `no assets enumerated for ${skillName}`);
-    assert.deepEqual(inSkill, [...inSkill].sort(), `assets for ${skillName} must be sorted`);
+  for (const skillsRoot of [path.join('.github', 'skills'), path.join('.agents', 'skills')]) {
+    for (const skillName of skillNames) {
+      const prefix = path.join(skillsRoot, skillName) + path.sep;
+      const inSkill = targets.filter((t) => t.startsWith(prefix));
+      assert.ok(inSkill.length >= 1, `no assets enumerated for ${skillsRoot}/${skillName}`);
+      assert.deepEqual(inSkill, [...inSkill].sort(), `assets for ${skillsRoot}/${skillName} must be sorted`);
+    }
   }
 });
 
@@ -211,4 +239,59 @@ test('package remains independent from @corpay/ai-dlc-toolkit', () => {
   assert.equal(packageJson.name, '10x-squad');
   assert.deepEqual(packageJson.bin, { '10x-squad': 'bin/10x-squad.js' });
   assert.equal(Object.hasOwn(packageJson, 'dependencies'), false);
+});
+
+test('install --harness copilot writes only the Copilot tree', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install', '--harness', 'copilot'], workspace);
+
+  assertInstalledAssets(workspace, harnessAssets.copilot);
+  assert.equal(fs.existsSync(path.join(workspace, '.github')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+});
+
+test('install --harness codex writes only the Codex tree', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install', '--harness', 'codex'], workspace);
+
+  assertInstalledAssets(workspace, harnessAssets.codex);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.github')), false);
+});
+
+test('install defaults to every harness', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install'], workspace);
+
+  assertInstalledAssets(workspace);
+  assert.equal(fs.existsSync(path.join(workspace, '.github', 'agents', '10x-squad.agent.md')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents', 'skills', '10x-squad-vivaldi', 'SKILL.md')), true);
+});
+
+test('install rejects an unknown harness without writing anything', () => {
+  const workspace = makeTempDir();
+
+  const result = spawnSync(process.execPath, [cliPath, 'install', '--harness', 'nonsense'], {
+    cwd: workspace,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unknown harness: nonsense/);
+  assert.equal(fs.existsSync(path.join(workspace, '.github')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+});
+
+test('Codex install ships no .codex/agents definitions', () => {
+  // spawn_agent exposes no agent-name parameter, so custom agent TOMLs are not
+  // addressable dispatch targets (docs/codex-harness-spike.md, C10). Shipping
+  // them would install files nothing can reach.
+  const workspace = makeTempDir();
+
+  runCli(['install', '--harness', 'codex'], workspace);
+
+  assert.equal(fs.existsSync(path.join(workspace, '.codex')), false);
 });

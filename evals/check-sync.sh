@@ -17,6 +17,8 @@ REPO="$(dirname "$HERE")"
 ROOT="${SQUAD_ROOT:-$(dirname "$REPO")}"
 LIVE_SKILLS="$ROOT/.github/skills"
 LIVE_AGENT="$ROOT/.github/agents/10x-squad.agent.md"
+LIVE_CODEX_SKILLS="$ROOT/.agents/skills"
+LIVE_CODEX_VIVALDI="$LIVE_CODEX_SKILLS/10x-squad-vivaldi/SKILL.md"
 ASSETS="$REPO/assets"
 INSTALLER="$REPO/lib/installer.js"
 UPSTREAM="$ROOT/corpay-agents/.github"
@@ -40,10 +42,36 @@ for dir in "$LIVE_SKILLS"/10x-*/; do
     srcbad "$s: live != assets (edit flowed the wrong way, or assets stale)"
   fi
 done
-if [ "$(sum "$LIVE_AGENT")" = "$(sum "$ASSETS/agents/10x-squad.agent.md")" ]; then
-  ok "Vivaldi: live == assets"
+# Vivaldi is composed, not copied: assets/vivaldi/{core,dispatch-<harness>} is the
+# source and each harness entrypoint is a build product. Compare against a fresh
+# composition so an edit made in a deployed copy still shows up as drift.
+compose() { node -e 'process.stdout.write(require("'"$REPO"'/lib/compose.js").composeVivaldi(process.argv[1]))' "$1"; }
+composed_sum() { compose "$1" | (md5 -q 2>/dev/null || md5sum 2>/dev/null | awk '{print $1}'); }
+
+if [ "$(sum "$LIVE_AGENT")" = "$(composed_sum copilot)" ]; then
+  ok "Vivaldi (copilot): live == composed assets"
 else
-  srcbad "Vivaldi: live != assets (installer would ROLL BACK live edits)"
+  srcbad "Vivaldi (copilot): live != composed assets (installer would ROLL BACK live edits)"
+fi
+
+echo "== 1b. Codex deployment: live .agents/skills == installer assets"
+if [ -d "$LIVE_CODEX_SKILLS" ]; then
+  for dir in "$LIVE_CODEX_SKILLS"/10x-*/; do
+    s="$(basename "$dir")"
+    [ "$s" = "10x-squad-vivaldi" ] && continue
+    if [ "$(sum "$dir/SKILL.md")" = "$(sum "$ASSETS/skills/$s/SKILL.md")" ]; then
+      ok "$s: codex live == assets"
+    else
+      srcbad "$s: codex live != assets (edit flowed the wrong way, or assets stale)"
+    fi
+  done
+  if [ "$(sum "$LIVE_CODEX_VIVALDI")" = "$(composed_sum codex)" ]; then
+    ok "Vivaldi (codex): live == composed assets"
+  else
+    srcbad "Vivaldi (codex): live != composed assets"
+  fi
+else
+  echo "  (no Codex deployment at $LIVE_CODEX_SKILLS — skipping)"
 fi
 
 echo "== 2. Installer manifest covers every live skill"

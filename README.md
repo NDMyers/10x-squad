@@ -1,14 +1,16 @@
 # 10x-squad
 
 
-Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator agent) plus seven skills for GitHub Copilot: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model, reasoning, and context routing).
+Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator) plus seven skills: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model, reasoning, and context routing). Ships to **GitHub Copilot** and **Codex CLI / ChatGPT app**.
 
 ```
-assets/agents/10x-squad.agent.md     Vivaldi — orchestrator custom agent
+assets/vivaldi/                      Vivaldi's single source: core.md (harness-agnostic body)
+                                     + dispatch-<harness>.md + frontmatter-<harness>.yml
 assets/skills/10x-*/                 seven skills, installed as complete packages
                                      (SKILL.md + nested scripts/, references/, agents/)
-lib/installer.js                     asset manifest + recursive copy logic
-bin/10x-squad.js                     CLI: 10x-squad install [-d <dir>]
+lib/compose.js                       renders each harness entrypoint from assets/vivaldi/
+lib/installer.js                     per-harness asset manifest + recursive copy logic
+bin/10x-squad.js                     CLI: 10x-squad install [-d <dir>] [--harness <name>]
 test/                                node --test suites (npm test runs full discovery)
 evals/                               deployment parity check + headless eval harness
 docs/review/                         squad review, architecture, eval plan, learning notes
@@ -20,7 +22,22 @@ Clone repository then inside run:
 ```
 node bin/10x-squad.js install --directory <workspace-root>
 ```
-(re-running is idempotent; unrelated `.github` customizations are preserved).
+(re-running is idempotent; unrelated `.github` / `.agents` customizations are preserved).
+
+`--harness copilot|codex|all` selects targets; the default is `all`.
+
+| Harness | Entrypoint | Installed to |
+|---|---|---|
+| `copilot` | `10x-squad` custom agent | `.github/agents/`, `.github/skills/` |
+| `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/` |
+
+**Codex operating notes.** Codex has no flag to boot the primary session as a custom agent, so
+Vivaldi is a skill invoked at the **root** session (`$10x-squad-vivaldi`) — persona subagents spawn
+at depth 1 from there. Start the session with `codex --enable multi_agent_v2`; the per-dispatch
+`model` / `reasoning_effort` actuator lives behind that flag and it ships disabled. Vivaldi sets
+`allow_implicit_invocation: false`, so it never fires on an unrelated request and does not appear in
+the ambient skill list — invoke it by name. Evidence and surface limits:
+`docs/codex-harness-spike.md`.
 
 ## Model routing
 
@@ -28,7 +45,7 @@ Each work-tier profile combines one exact model, one reasoning choice, and one c
 
 ## The source-of-truth rule
 
-**This repo's `assets/` is the only place squad prompts are edited.** Deployed copies (`<workspace>/.github/agents|skills/`, corpay-agents) are build outputs — never edit them in place.
+**This repo's `assets/` is the only place squad prompts are edited.** Deployed copies (`<workspace>/.github/agents|skills/`, `<workspace>/.agents/skills/`, corpay-agents) are build outputs — never edit them in place. Vivaldi is doubly a build output: both harness entrypoints are *composed* from `assets/vivaldi/`, so there is no checked-in copy of the assembled file to edit by mistake. `evals/check-sync.sh` recomposes and compares.
 
 History: until 2026-07-12 it was the other way around — the live `.github/` copy evolved (Sentinel, traceability gates, Jun 1) while `assets/` sat at May 8, so running the installer would have *rolled back* the best lineage and omitted Sentinel (absent from the manifest). That lineage was adopted back into `assets/` and the manifest fixed; this repo was git-initialized the same day so `.bak` files are retired as a versioning mechanism.
 

@@ -24,7 +24,7 @@ claimed only when direct evidence supports it.
 
 | # | Question | Pass condition | Status |
 |---|---|---|---|
-| C1 | Does a root skill hold the orchestrator role across a multi-turn session? | `$10x-squad-vivaldi` loads, Vivaldi introduces itself, persona survives ≥3 turns | **PENDING** (interactive) |
+| C1 | Does a root skill hold the orchestrator role? | `$10x-squad-vivaldi` loads and Vivaldi introduces itself | ✅ **PASSED** (single-turn; multi-turn persistence still interactive) |
 | C2 | Does subagent spawn honour a per-call `model` and `reasoning_effort`? | Child on a model ≠ parent's runs on the requested model | ✅ **PASSED** (with a narrow model set — see C7) |
 | C3 | Does an invalid model fail loud? | Visible error, no child launch, no substitution | ✅ **PASSED** |
 | C4 | Is executed child model observable **to the agent**? | `codex exec --json` / spawn result exposes a comparable `model` | ❌ **FAILED** — no model field anywhere |
@@ -296,12 +296,45 @@ Three things proven at once:
 
 ---
 
+### Probe E — Vivaldi as a root skill: **C1 PASSED**, with a discovery caveat ⚠️
+
+After a real `node bin/10x-squad.js install -d <scratch>`, `codex debug prompt-input` (free, no model
+call) showed the model-visible skill list. All six persona skills appeared. **Vivaldi did not.**
+
+Isolated by toggling one field:
+
+| `agents/openai.yaml` | Listed in `prompt-input`? |
+|---|---|
+| file absent | yes |
+| `policy.allow_implicit_invocation: true` | yes |
+| `policy.allow_implicit_invocation: false` | **no** |
+
+So `allow_implicit_invocation: false` removes a skill from the ambient list entirely — the model is
+not told it exists. **Explicit invocation still works:**
+
+```text
+$ codex exec -C <workspace> --sandbox read-only '$10x-squad-vivaldi'
+→ "I'm Vivaldi, orchestrating the 10x Squad: Einstein for deliberation, Peter for spec,
+   Linus for build, Cobalt and Sentinel for review, Ralph for tests. Send the task, and
+   I'll classify the tier and route it through the pipeline."
+```
+
+This is the intended posture and it is worth stating plainly because the two halves look
+contradictory: Vivaldi is **invisible to implicit matching** (a 25KB orchestrator must never hijack
+an unrelated request) but **fully reachable** via `$10x-squad-vivaldi`. It also confirms the
+skill-load check in the Codex dispatch contract works — the introduction is the signal.
+
+Not yet proven: that the persona holds across ≥3 turns (`codex exec` is single-shot; needs an
+interactive session).
+
+---
+
 ## Remaining probes
 
 | Probe | Blocked on | Proves |
 |---|---|---|
-| **E** — root skill persistence | Phase 1/2 build | C1 |
-| **F** — ChatGPT desktop app | Phase 1/2 build | C8 |
+| **E2** — multi-turn persona persistence | interactive session | C1 (full) |
+| **F** — ChatGPT desktop app | nothing; build now installs | C8 |
 | **G** — concurrency | nothing | C6 (Cobalt ∥ Sentinel) |
 
 ---

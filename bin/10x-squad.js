@@ -13,6 +13,7 @@ Commands:
 
 Options:
   -d, --directory <path>  Target project directory
+  --harness <name>        copilot | codex | all (default: all)
   -h, --help              Show help
   -v, --version           Show version`);
 }
@@ -29,6 +30,16 @@ function parseInstallOptions(args) {
         throw new Error(`${arg} requires a path`);
       }
       options.directory = directory;
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--harness') {
+      const harness = args[index + 1];
+      if (!harness) {
+        throw new Error(`${arg} requires a name`);
+      }
+      options.harness = harness;
       index += 1;
       continue;
     }
@@ -71,8 +82,8 @@ function main(argv) {
       return 0;
     }
 
-    const result = installTenXSquad({ directory: options.directory });
-    console.log(`Installed 10x Squad assets into ${result.targetDirectory}`);
+    const result = installTenXSquad({ directory: options.directory, harness: options.harness });
+    console.log(`Installed 10x Squad assets (${result.harnesses.join(', ')}) into ${result.targetDirectory}`);
     return 0;
   } catch (err) {
     console.error(`10x-squad install failed: ${err.message}`);
