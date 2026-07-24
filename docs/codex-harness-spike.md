@@ -337,6 +337,23 @@ interactive session).
 
 ---
 
+### Probe H — full pipeline e2e after install: **PASSED** ✅
+
+After `node bin/10x-squad.js install -d <scratch> --harness codex` and a workspace `codex-cli`
+routing profile, `$10x-squad-vivaldi` was given a real Trivial task ("fix the typo in NOTES.md").
+Observed, in order: Vivaldi classified `Trivial`; ran
+`model-tier-config.js resolve --harness codex-cli --tier trivial` and consumed the exact JSON
+(`model gpt-5.6-terra, reasoning low, context auto`); emitted the exact announcement
+`Routing to Linus — Trivial (trivial) [codex-cli] — model gpt-5.6-terra; reasoning low`; spawned the
+Linus persona; the edit landed (`teh cat` → `the cat`, confirmed by `git diff`). This exercises the
+whole path — install → configure → resolve → announce → dispatch → apply — on the real harness.
+
+**Minor finding:** the first `spawn_agent` was rejected on a `task_name` naming constraint
+(`Linus-trivial` — hyphen + uppercase) and Vivaldi self-recovered with a valid name. Guidance in
+`dispatch-codex.md` now specifies a lowercase `snake_case` `task_name` (`linus_trivial`).
+
+---
+
 ## Remaining probes
 
 | Probe | Blocked on | Proves |
