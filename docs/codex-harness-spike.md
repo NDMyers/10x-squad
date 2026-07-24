@@ -134,19 +134,27 @@ Reasoning effort `bogus-effort` is not supported for model `gpt-5.6-sol`.
 Supported reasoning efforts: low, medium, high, xhigh, max, ultra
 ```
 
-**Consequence for Phase 3.** The repo currently validates one global enum,
-`REASONING_EFFORTS = auto|low|medium|high|xhigh` (`model-tier-config.js:23`,
-`model-id-resolver.js:11`), gated by one per-harness boolean
-(`EXPLICIT_DISPATCH_HARNESSES`, `model-tier-config.js:25`). Codex needs **two** additions:
+**Consequence for Phase 3 (and how it was resolved).** The repo validated one global enum,
+`REASONING_EFFORTS = auto|low|medium|high|xhigh`, gated by one per-harness boolean
+(`EXPLICIT_DISPATCH_HARNESSES`). Effort legality on Codex has **two** dimensions:
 
-1. `max` and `ultra` must join the accepted vocabulary (harness-scoped — they are not Copilot values).
-2. Validation must become **per-assignment**, not merely per-harness: a `complex` tier assigned
-   `gpt-5.5` + `ultra` is invalid, while the same effort on `gpt-5.6-sol` is valid. The current
-   `validateDispatchSettings` signature (`model-tier-config.js:76`) sees `dispatch_settings` without
-   the paired `assignments`, so it structurally cannot express this. Phase 3 must pass both.
+1. A harness-level vocabulary — `max` and `ultra` are valid Codex efforts but not Copilot ones.
+2. A per-model constraint — `gpt-5.5` + `ultra` is invalid while `gpt-5.6-sol` + `ultra` is valid.
 
-This is a genuine finding that the plan's "per-harness supported-settings map" underspecified —
-per-harness is necessary but not sufficient.
+Phase 3 split these by where the knowledge lives, rather than forcing both into one validator:
+
+- **Dimension 1 → the dependency-free engine.** The global enums + boolean were replaced by a
+  per-harness capability map (`HARNESS_DISPATCH_CAPABILITIES` in both scripts). `codex-cli` gets
+  `…|max|ultra` reasoning and `auto`-only context; Copilot behaviour is byte-preserved.
+- **Dimension 2 → the skill and the harness, NOT the engine.** Per-model legality is a *live-catalog*
+  fact (`codex debug models` → `supported_reasoning_levels`). The dependency-free engine must never
+  hardcode model facts, so it does not attempt this check. The configure-tiers skill validates the
+  chosen effort against the chosen model's supported set at configuration time, and Codex enforces
+  it again at spawn (Probe C5, above). This is strictly better than threading `assignments` into
+  `validateDispatchSettings` would have been — that path could only have carried a hardcoded table.
+
+So the plan's "per-harness supported-settings map" was the right engine shape; the per-model half
+simply belongs one layer up, with the catalog.
 
 ### C5 — Unattended resolver: mechanism identified, execution unproven
 
@@ -355,11 +363,12 @@ interactive session).
 successful addressability probe and records `unverified` with a loud warning. Do not claim executed-
 model verification on Codex.
 
-**Two design changes this spike forces on the approved plan:**
+**Two design changes this spike forced on the approved plan (both now implemented):**
 
-1. **Drop `assets/codex-agents/*.toml` from Phase 2** (C10) — personas ride in the spawn `message`.
-2. **Phase 3 validation must be per-assignment, not per-harness** (C9) — `reasoning_effort` legality
-   depends on the paired model.
+1. **Dropped `assets/codex-agents/*.toml` from Phase 2** (C10) — personas ride in the spawn `message`.
+2. **Split effort validation by knowledge layer** (C9) — harness vocabulary in the engine's
+   per-harness capability map; per-model legality in the skill (live catalog) + the harness (spawn).
+   See the "Consequence for Phase 3" note above for why this beats a single per-assignment validator.
 
 **Open product question:** only two spawnable models exist today. Five work tiers across
 `{gpt-5.6-sol, gpt-5.6-terra}` × six reasoning efforts is the whole routing space on this surface.
