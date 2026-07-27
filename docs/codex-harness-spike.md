@@ -1,8 +1,12 @@
 # Harness Spike — Codex CLI / ChatGPT App as a 10x Squad Surface
 
 **Plan:** `~/.claude/plans/does-the-10x-squad-properly-toasty-falcon.md` (Phase 0)
-**Started:** 2026-07-23 (Claude Opus 4.8) · **Updated:** 2026-07-27 (Probe F Part 1, criterion §5/C11)
-**Status: GATE PASSED for `codex-cli` at the *unverified* evidence tier (C2/C3/C5/C9 direct evidence; C4 executed-model identity is NOT observable on this surface). `codex-app` (ChatGPT desktop) unproven — claim nothing for it.**
+**Started:** 2026-07-23 (Claude Opus 4.8) · **Completed:** 2026-07-27 (Claude Opus 5)
+**Status: SPIKE COMPLETE — every pre-registered criterion has been run.** `codex-cli` and `codex-app`
+both **PASS the routing gate at the *unverified* evidence tier**: per-dispatch model + reasoning,
+fail-loud rejection, unattended resolver, depth-1 concurrency, and multi-turn persistence are all
+directly evidenced on both surfaces. **C4 (executed-model identity) fails on both** — it is not
+observable anywhere on Codex, so never claim executed-model verification here.
 
 Companion to `docs/model-routing-harness-spike.md`, which gated `copilot-cli` and `copilot-vscode`.
 Same methodology, same evidence discipline: criteria are fixed **before** probes run, and a gate is
@@ -33,17 +37,17 @@ claimed only when direct evidence supports it.
 
 | # | Question | Pass condition | Status |
 |---|---|---|---|
-| C1 | Does a root skill hold the orchestrator role? | `$10x-squad-vivaldi` loads and Vivaldi introduces itself | ✅ **PASSED** (single-turn; multi-turn persistence still interactive) |
+| C1 | Does a root skill hold the orchestrator role? | `$10x-squad-vivaldi` loads and Vivaldi introduces itself | ✅ **PASSED in full** — held across 3 turns, and retained the turn-1 harness key and turn-2 tier (Probe E2) |
 | C2 | Does subagent spawn honour a per-call `model` and `reasoning_effort`? | Child on a model ≠ parent's runs on the requested model | ✅ **PASSED** (with a narrow model set — see C7) |
 | C3 | Does an invalid model fail loud? | Visible error, no child launch, no substitution | ✅ **PASSED** |
 | C4 | Is executed child model observable **to the agent**? | `codex exec --json` / spawn result exposes a comparable `model` | ❌ **FAILED** — no model field anywhere |
 | C5 | Does the resolver run unattended? | `node …/model-tier-config.js resolve` runs with no per-call approval; a decline is machine-visible | ✅ **PASSED** |
-| C6 | Depth + concurrency | Root Vivaldi → depth-1 personas spawn; Cobalt ∥ Sentinel both run | **PARTIAL** — depth-1 spawn proven; concurrency untested |
+| C6 | Depth + concurrency | Root Vivaldi → depth-1 personas spawn; Cobalt ∥ Sentinel both run | ✅ **PASSED** — two distinct depth-1 children, overlap directly evidenced (one completed while the other ran) (Probe G) |
 | C7 | Catalog discovery | Live, reliable, machine-readable list from the harness | ⚠️ **REVISED** — session catalog ≠ spawn catalog |
 | C8 | ChatGPT desktop app parity | Loads `.agents/skills/`; spawns subagents with per-dispatch `model`/`reasoning_effort`; executes shell unattended | ✅ **PASSED** at the *unverified* tier (Probe F) — via `multi_agent_v1`, not v2; executed-model identity still unobservable |
 | C9 | Accepted `reasoning_effort` vocabulary | Exact set accepted at the spawn boundary | ✅ **PASSED** — enforced per model at spawn |
 | C10 | Are `.codex/agents/*.toml` dispatch targets? | `spawn_agent` can address a custom agent by name | ❌ **FAILED** — no agent-name parameter exists |
-| C11 | Surface discriminator — can Vivaldi tell `codex-app` from `codex-cli` at runtime? | A deterministic signal observable from an agent-run shell command | ✅ **PASSED** — `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop`, corroborated by `PATH`; binary-path and version signals **failed** |
+| C11 | Surface discriminator — can Vivaldi tell `codex-app` from `codex-cli` at runtime? | A deterministic signal observable from an agent-run shell command | ✅ **PASSED** — `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop`, corroborated by `PATH`; binary-path and version signals **failed**. Negative half confirmed from a real agent shell (Probe E2 turn 1) |
 
 ---
 
@@ -824,32 +828,108 @@ two surfaces to one stored profile is precisely how a stale assignment survives 
 
 ---
 
-## Remaining probes
+### Probes E2 + G — one multi-turn `codex exec` session: **C1 and C6 both PASSED** ✅
 
-| Probe | Blocked on | Proves |
-|---|---|---|
-| **E2** — multi-turn persona persistence | interactive session | C1 (full) |
-| **F Part 2** — ChatGPT desktop app | a human at the GUI; workspace + protocol are ready | C8, C11 |
-| **G** — concurrency | nothing | C6 (Cobalt ∥ Sentinel) |
+`codex exec resume --last` drives a persistent session non-interactively, which removes the
+"needs an interactive session" blocker both of these carried. One session, three turns, run
+2026-07-27 against the installed probe workspace under `--sandbox read-only`.
+
+This run also served as **live verification of the `codex-app` implementation**, since the workspace
+carried the newly composed Vivaldi.
+
+#### Turn 1 — surface detection (F7 confirmation, C11)
+
+Vivaldi loaded, introduced itself, and ran the dispatch contract's detection step verbatim:
+
+```text
+/bin/zsh -lc "printf 'originator=%s\n' \"${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-none}\"
+              case \"$PATH\" in (*/Applications/ChatGPT.app/*) echo 'app_path=yes';; (*) echo 'app_path=no';; esac"
+  → originator=none
+    app_path=no
+  → resolved harness key: codex-cli
+```
+
+**This closes the F7 method caveat.** The CLI negative half was previously inferred from
+`codex sandbox`; it is now direct evidence from a real agent-session shell, and both signals agree.
+The detection logic shipped in `dispatch-codex.md` works on the live harness.
+
+#### Turn 2 — Probe G: **C6 PASSED**, concurrency is real
+
+Task: review a file carrying SQL and shell-execution surfaces. Vivaldi classified
+**Standard (clear)**, resolved `gpt-5.6-sol` / `high`, and spawned both reviewers:
+
+```text
+Cobalt   — agent_id 019fa508-582c-76d1-a7b7-1a0fab305109
+Sentinel — agent_id 019fa508-5888-7f13-adc0-e53e92748b92
+both:      model=gpt-5.6-sol, reasoning_effort=high
+```
+
+**The overlap is directly evidenced, not merely asserted.** Mid-turn the session reported
+*"Sentinel has completed with `REQUEST_CHANGES`; Cobalt is still outstanding"* — one child finished
+while the other was still running, which sequential dispatch cannot produce. Two distinct depth-1
+children under one root, exactly the C6 pass condition.
+
+Both reviewers returned real findings in their own domains (Cobalt: `psql` emits table text so
+`JSON.parse` fails; Sentinel: command injection, SQL injection, missing authorization scope), so the
+domain split held rather than the two collapsing into one review.
+
+**Implementation verification.** The session reported its exact spawn parameters: *"No `task_name`,
+`service_tier`, or `fork_context` parameters were passed."* That is precisely what the rewritten v1
+call-shape guidance requires — the contract was followed on the live harness, not just asserted in
+unit tests.
+
+#### Turn 3 — **C1 PASSED in full**
+
+Asked, without re-reading any skill file, to state its identity, roster, the tier it assigned, and the
+harness key from turn 1. It returned all four correctly: Vivaldi, the six-persona roster, *Standard
+(clear)* with its reasoning, and `codex-cli`.
+
+That is stronger than the criterion required. C1 asked only that the persona **hold** across ≥3 turns;
+this shows the session also **retained decisions across turns** — the turn-1 harness key and the
+turn-2 tier were both recalled at turn 3. Persona persistence and routing-state persistence are
+distinct properties, and both hold.
 
 ---
 
-## Gate status: **PASSED for `codex-cli` at the unverified evidence tier**
+## Remaining probes
+
+**None.** Every pre-registered criterion has been run.
+
+| Probe | Status |
+|---|---|
+| **E2** — multi-turn persona persistence | ✅ closed — C1 full |
+| **F Parts 1+2** — ChatGPT desktop app | ✅ closed — C8, C11 |
+| **G** — concurrency | ✅ closed — C6 |
+| **I** — same-day CLI re-probe | ✅ closed — resolved the catalog and v1/v2 confounds |
+
+---
+
+## Gate status: **PASSED for `codex-cli` AND `codex-app` at the unverified evidence tier**
 
 | Pre-registered criterion | Result |
 |---|---|
-| §1 routing gate — per-dispatch model (C2) | ✅ `spawn_agent` `model` + `reasoning_effort` honoured |
-| §1 routing gate — fail loud (C3) | ✅ invalid model and invalid effort both rejected pre-launch, no substitution |
-| §1 routing gate — unattended resolver (C5) | ✅ ran with no approval; exit 3; failure machine-visible |
-| §2 executed-model identity (C4) | ❌ not observable → `unverified` / `addressability_probe` only |
-| §3 live catalog (C7) | ⚠️ spawn-time error enumeration only; `codex debug models` is the wrong source |
-| §4 `codex-app` is separate (C8) | ⏳ unproven as a routing surface — but Probe F0b now shows the app ships a **different engine build** (`0.146.0-alpha.3.1` vs `0.145.0`), so §4 is backed by evidence, not only by rule. Claim nothing for the ChatGPT desktop app until Probe F Part 2 runs |
-| §5 surface discriminator (C11) | ⏳ unproven; prior is **weak** — the surfaces share `CODEX_HOME` and `shell_environment_policy.set`, and no surface-identity variable exists in either binary (F0g) |
+| §1 routing gate — per-dispatch model (C2) | ✅ `model` + `reasoning_effort` honoured on both surfaces |
+| §1 routing gate — fail loud (C3) | ✅ invalid model and invalid effort rejected pre-launch on both, no substitution |
+| §1 routing gate — unattended resolver (C5) | ✅ ran with no approval on both; exit contract intact; failure machine-visible |
+| §2 executed-model identity (C4) | ❌ not observable on **either** surface → `unverified` / `addressability_probe` only |
+| §3 live catalog (C7) | ⚠️ spawn-time error enumeration only — and Probe I1 showed it **drifts**, so re-acquire, never cache |
+| §4 `codex-app` is separate (C8) | ✅ **PASSED** — different engine build (F0b), independently discriminable (F7), independently drifting catalogs (I1). Ships as its own harness key |
+| §5 surface discriminator (C11) | ✅ **PASSED** — `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` + `PATH`; confirmed live in E2 turn 1. The weak prior recorded in F0g was wrong in Part 1's favour |
 
-**Verdict:** `codex-cli` may join `EXPLICIT_DISPATCH_HARNESSES`, but it enters at the
-**`copilot-vscode` evidence tier, not the `copilot-cli` tier** — configuration completes after a
-successful addressability probe and records `unverified` with a loud warning. Do not claim executed-
-model verification on Codex.
+**Verdict:** both Codex surfaces carry the routing contract, and both enter at the **`copilot-vscode`
+evidence tier, not the `copilot-cli` tier** — configuration completes after a successful
+addressability probe and records `unverified` with a loud warning. Do not claim executed-model
+verification on Codex.
+
+**What the late probes overturned.** Three things this document previously asserted were wrong, and
+each was wrong in the same way — an inference recorded in the voice of a measurement:
+
+1. `multi_agent_v2` as a precondition (Step 2) — the actuator is in the default **v1** toolset (I2).
+2. The spawn catalog as a stable set (`{gpt-5.6-sol, gpt-5.6-terra}`, B2) — it **drifts** (I1).
+3. The engine-version and binary-path signals as viable discriminators (Part 1) — both **fail** (F7).
+
+The corrective is not more caution in the prose, it is the discipline already in §1–§5: measure
+before recording, and re-measure anything the surface can change underneath you.
 
 **Two design changes this spike forced on the approved plan (both now implemented):**
 
@@ -858,5 +938,7 @@ model verification on Codex.
    per-harness capability map; per-model legality in the skill (live catalog) + the harness (spawn).
    See the "Consequence for Phase 3" note above for why this beats a single per-assignment validator.
 
-**Open product question:** only two spawnable models exist today. Five work tiers across
-`{gpt-5.6-sol, gpt-5.6-terra}` × six reasoning efforts is the whole routing space on this surface.
+~~**Open product question:** only two spawnable models exist today.~~ **WITHDRAWN 2026-07-27 (I1).**
+The premise was a transient entitlement state, not a property of Codex: five models are spawnable on
+both surfaces today. There is no model-vs-effort forced choice to decide. If the question returns,
+re-measure first — do not reuse either figure from this document.
