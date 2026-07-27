@@ -1,7 +1,8 @@
 # Harness Spike — Codex CLI / ChatGPT App as a 10x Squad Surface
 
 **Plan:** `~/.claude/plans/does-the-10x-squad-properly-toasty-falcon.md` (Phase 0)
-**Started:** 2026-07-23 (Claude Opus 4.8) · **Status: GATE PASSED for `codex-cli` at the *unverified* evidence tier (C2/C3/C5/C9 direct evidence; C4 executed-model identity is NOT observable on this surface). `codex-app` (ChatGPT desktop) unproven — claim nothing for it.**
+**Started:** 2026-07-23 (Claude Opus 4.8) · **Updated:** 2026-07-27 (Probe F Part 1, criterion §5/C11)
+**Status: GATE PASSED for `codex-cli` at the *unverified* evidence tier (C2/C3/C5/C9 direct evidence; C4 executed-model identity is NOT observable on this surface). `codex-app` (ChatGPT desktop) unproven — claim nothing for it.**
 
 Companion to `docs/model-routing-harness-spike.md`, which gated `copilot-cli` and `copilot-vscode`.
 Same methodology, same evidence discipline: criteria are fixed **before** probes run, and a gate is
@@ -21,6 +22,14 @@ claimed only when direct evidence supports it.
    acceptable (`10x-squad-configure-tiers/SKILL.md:102`). (C7.)
 4. `codex-app` (ChatGPT desktop) is a **separate surface** and inherits nothing from `codex-cli`.
    Identifiers and capabilities are never reused across surfaces. (C8.)
+5. **Extension recorded 2026-07-27, before any Probe F evidence was taken.** A surface earns its own
+   harness key only if the agent can observe, **at runtime**, which surface it is running on. Both
+   Codex surfaces open the same workspace and load the same single installed Vivaldi
+   (`.agents/skills/10x-squad-vivaldi/SKILL.md`), whose dispatch section hardcodes
+   `--harness codex-cli`. Adding a `codex-app` key with no discriminator would therefore not leave
+   the app unsupported — it would make the app resolve the **CLI's** profile silently, converting a
+   known gap into a silent mis-routing failure. Capability without addressability is not support.
+   (C11.)
 
 | # | Question | Pass condition | Status |
 |---|---|---|---|
@@ -31,9 +40,10 @@ claimed only when direct evidence supports it.
 | C5 | Does the resolver run unattended? | `node …/model-tier-config.js resolve` runs with no per-call approval; a decline is machine-visible | ✅ **PASSED** |
 | C6 | Depth + concurrency | Root Vivaldi → depth-1 personas spawn; Cobalt ∥ Sentinel both run | **PARTIAL** — depth-1 spawn proven; concurrency untested |
 | C7 | Catalog discovery | Live, reliable, machine-readable list from the harness | ⚠️ **REVISED** — session catalog ≠ spawn catalog |
-| C8 | ChatGPT desktop app parity | Loads `.agents/skills/` and `.codex/agents/`; spawns subagents; executes shell | **PENDING** (interactive) |
+| C8 | ChatGPT desktop app parity | Loads `.agents/skills/`; spawns subagents with per-dispatch `model`/`reasoning_effort`; executes shell unattended | **PENDING** — free half recorded (Probe F Part 1); F3/F4/F5 need the GUI |
 | C9 | Accepted `reasoning_effort` vocabulary | Exact set accepted at the spawn boundary | ✅ **PASSED** — enforced per model at spawn |
 | C10 | Are `.codex/agents/*.toml` dispatch targets? | `spawn_agent` can address a custom agent by name | ❌ **FAILED** — no agent-name parameter exists |
+| C11 | Surface discriminator — can Vivaldi tell `codex-app` from `codex-cli` at runtime? | A deterministic signal observable from an agent-run shell command | **PENDING** (interactive, Probe F7) |
 
 ---
 
@@ -354,12 +364,194 @@ whole path — install → configure → resolve → announce → dispatch → a
 
 ---
 
+### Probe F — ChatGPT desktop app (`codex-app`)
+
+Split in two because the two halves have different costs and, more importantly, **different
+epistemic standing**. Part 1 is what the machine can be asked without a model call; Part 2 is what
+only a human driving the GUI can answer. Nothing in Part 1 is evidence about the app's *agent
+surface* — read the scope note before drawing a conclusion from it.
+
+#### Part 1 — free evidence, RECORDED 2026-07-27 (no model calls, no billing)
+
+> **Scope of this evidence.** Every row below observes the **engine binary the app ships**
+> (`/Applications/ChatGPT.app/Contents/Resources/codex`), invoked directly from a terminal. It says
+> nothing about what tools the app's chat UI exposes to a session, which is precisely what F3/F4/F5
+> test. Per Principle 8 (`docs/review/LEARNING.md`), these claims inherit the scope of their
+> evidence: they are about the bundled engine, not about `codex-app` as an agent surface.
+
+Setup — a disposable workspace, never this repo:
+
+```bash
+S=/tmp/codex-app-probe && rm -rf $S && mkdir -p $S && cd $S && git init -q && echo "teh cat" > NOTES.md && git add -A
+node /Users/ndmyers/Accrualify/10x-squad/bin/10x-squad.js install -d $S --harness codex
+node $S/.agents/skills/10x-squad-configure-tiers/scripts/model-tier-config.js \
+  upsert-profile --input <profile.json> --scope workspace --workspace-root $S --harness codex-cli
+```
+
+(`<profile.json>` is the known-good `codex-cli` profile: `gpt-5.6-terra` for `trivial`/`lite`,
+`gpt-5.6-sol` for the three standard/complex tiers, efforts `low|medium|high|high|ultra`, all
+contexts `auto`. `resolve --tier trivial --json` then returns
+`{"ok":true,…,"model":"gpt-5.6-terra","check_status":"unverified","reasoning_effort":"low","context_tier":"auto"}`
+at exit 0, so Part 2 has a real profile to resolve.)
+
+**F0a — versions.** ChatGPT app bundle `26.721.41059` (`CFBundleShortVersionString`).
+
+**F0b — the app ships its own engine, and it is a different build.** ⚠️
+
+| Surface | Binary | Version |
+|---|---|---|
+| `codex-cli` | `~/.local/bin/codex` | `codex-cli 0.145.0` |
+| `codex-app` | `/Applications/ChatGPT.app/Contents/Resources/codex` | `codex-cli 0.146.0-alpha.3.1` |
+
+This upgrades pre-registered criterion §4 from *policy* to *evidence*: the two surfaces do not merely
+deserve separate treatment by rule, they run **different engine builds**, one of them a prerelease.
+A capability proven on 0.145.0 is not a capability proven on 0.146.0-alpha.3.1, in either direction.
+
+**F0c — `multi_agent_v2` ships disabled on the app engine too.** Identical to the CLI:
+
+```text
+multi_agent                          stable             true
+multi_agent_mode                     removed            false
+multi_agent_v2                       stable             false
+```
+
+So the Step-2 blocker recorded for `codex-cli` applies unchanged, and Part 2 must enable the feature
+or it measures v1 and proves nothing.
+
+**F0d — the two engines see an identical *parent* catalog.** `codex debug models` from each binary,
+normalized and diffed, is byte-identical: the same seven entries, same `visibility`, same
+`supported_reasoning_levels` as the Step-2 snapshot. **This is not transitive to the spawn catalog.**
+Probe B2 established on `codex-cli` that the spawn set is strictly smaller than the parent set and is
+knowable only at the spawn boundary; the app's spawn set is unmeasured and must not be inferred from
+this row.
+
+**F0e — the launcher forwards config and feature overrides.** `codex app --help` documents
+`-c <key=value>` and `--enable <FEATURE>` ("Equivalent to `-c features.<name>=true`") alongside the
+`[PATH]` workspace argument. That is the mechanism Part 2 uses to try enabling `multi_agent_v2`
+without touching global config. **Whether the Electron shell actually threads those into the agent
+session is unproven** — F3 is the test.
+
+**F0f — the app engine sees the installed squad skills.** `codex debug prompt-input` run from the
+probe workspace with the bundled binary lists all seven installed skills — the six personas plus
+`10x-squad-configure-tiers` — with `file:` locators under `/private/tmp/codex-app-probe/.agents/skills/`.
+Vivaldi is **absent**, exactly as on the CLI (Probe E: `allow_implicit_invocation: false` removes a
+skill from the ambient list by design; explicit `$10x-squad-vivaldi` invocation is the reachability
+test, and that is F2).
+
+Diffing the two engines' `prompt-input` output structurally: **content identical**, one structural
+difference — the app engine's entries carry an extra `id` field (`msg_019fa483-…`) that the CLI's
+do not. Not squad-relevant, recorded for completeness.
+
+**F0g — the surfaces share `CODEX_HOME`, and this makes a discriminator *less* likely.** ⚠️
+
+Both binaries document `~/.codex/config.toml` as their config source, and the app writes into that
+same shared file: it owns `[mcp_servers.node_repl]` (whose `env` table carries
+`CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"`,
+`BROWSER_USE_CODEX_APP_VERSION = "26.721.41059"`, `CODEX_HOME`) and it owns entries in
+`[shell_environment_policy.set]`.
+
+The consequence matters for C11: **`shell_environment_policy.set` is shared**, so anything it injects
+appears in *both* surfaces' agent shells and cannot discriminate. Likewise the `node_repl` `env` table
+reaches that MCP server, not the agent's shell. A discriminator, if one exists, must therefore be
+injected by the app **at runtime**, not read from config.
+
+Static search of the app bundle and both engine binaries for a surface-identity variable found **no
+`CODEX_SURFACE`/`CODEX_CLIENT`/`CODEX_UI` equivalent**. The nearest candidates, none confirmed to
+reach an agent shell, are `CODEX_MANAGED_PACKAGE_ROOT` (two occurrences in the app engine, one in the
+CLI engine), `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, and the app-only `CODEX_APP_BUILD_FLAVOR` /
+`CODEX_APP_BRAND` strings in `app.asar`. **Prior going into F7: weak.** The likeliest real signal is
+the resolved `codex` binary path inside the app's shell, and the fallback is the engine version —
+which F7 must treat as a weak signal only (see below).
+
+**F0h — the probe workspace is not yet trusted.** `~/.codex/config.toml` carries `trust_level`
+entries for ten project paths; `/private/tmp/codex-app-probe` is not among them. Expect a trust
+prompt when the app opens it — approve it in the UI, or pre-add the entry. This is a setup detail,
+not a finding.
+
+##### What Part 1 settles, and what it does not
+
+| Question | Settled by Part 1? |
+|---|---|
+| Is `codex-app` a genuinely distinct surface? | **Yes** — different engine build (F0b) |
+| Does the app's engine discover the installed skills? | **Yes**, for the engine invoked directly (F0f) |
+| Does the app's *chat UI* expose `spawn_agent` with `model` + `reasoning_effort`? | **No** — F3/F4 |
+| Can the app run the resolver unattended? | **No** — F5 |
+| Can Vivaldi tell which surface it is on? | **No** — F7, and the prior is weak (F0g) |
+
+#### Part 2 — operator protocol: **NOT YET RUN**
+
+Requires a human at the ChatGPT GUI. Runs in one sitting against the workspace built in Part 1.
+Record each row independently; a row that cannot be run is recorded as *not run*, never inferred
+from a neighbouring row.
+
+**Launch.** Try the transient path first, so global config stays untouched:
+
+```bash
+codex app --enable multi_agent_v2 /tmp/codex-app-probe
+```
+
+If the session reports no `spawn_agent` tool, fall back to the persistent path — add one line under
+the **existing** `[features]` table in `~/.codex/config.toml`:
+
+```toml
+[features]
+js_repl = false
+multi_agent_v2 = true   # PROBE ONLY — remove after
+```
+
+> ⚠️ **This is a persistent, global change that also affects the Codex CLI.** Remove the line when
+> the sitting ends, and record in the results table which launch path was used — a result obtained
+> via the config fallback does **not** demonstrate that `codex app --enable` works.
+
+**Rows to run.** Paste each into the app; record the verbatim response.
+
+| # | What to run in the app | Pass condition | On failure, record |
+|---|---|---|---|
+| F1 | "List the skills you can see." | All seven installed squad skills appear (six personas + `10x-squad-configure-tiers`) | The full list returned, so the gap is attributable |
+| F2 | `$10x-squad-vivaldi` | Vivaldi loads and introduces itself by name and roster | Whether the app rejected the `$` syntax or loaded nothing |
+| F3 | "List your available tools verbatim, with each tool's parameter names." | `spawn_agent` present | Whether v1 `multi_agent` tools appear instead, and which launch path was used |
+| F4 | (only if F3 passes) "Spawn an agent with model `gpt-5.6-sol`, reasoning_effort `ultra`, task_name `probe_f4`, message `Reply with exactly CHILD_OK`. Then wait for it." | Both parameters accepted; child returns `CHILD_OK` | The exact rejection text — and the `Available models:` enumeration if present, which is the app's real spawn catalog |
+| F4b | (only if F4 passes) Repeat with model `not-a-real-model-xyz` | Rejected **before** launch, no substitution, error enumerates the accepted set | Any silent substitution — that would be a hard fail, worse than F4 failing |
+| F5 | "Run exactly: `node .agents/skills/10x-squad-configure-tiers/scripts/model-tier-config.js resolve --workspace-root \"$PWD\" --harness codex-cli --tier trivial --json` and show stdout, stderr, and the exit code." | Runs with no approval prompt; stdout is the single-line JSON; exit 0 | Whether a prompt appeared, and whether a decline is machine-visible to the agent |
+| F6 | "Read `.10x-squad/model-routing.json` and report the `codex-cli` profile you see." | Same profile the CLI resolves | Any divergence in config/trust/profile resolution |
+| F7 | "Run and show output: `env \| sort`; `command -v codex`; `codex --version`; `printf '%s\n' \"${CODEX_HOME:-unset}\"`; `printf '%s\n' \"${CODEX_MANAGED_PACKAGE_ROOT:-unset}\"`" — then run the identical block under `codex exec` on the CLI and diff | A **stable** differing signal: an env var, or a `codex` path resolving inside `/Applications/ChatGPT.app/` | The full diff, even when empty — an empty diff is the finding |
+
+**F7 pass bar, stated before the probe runs.** An engine-version difference (`0.146.0-alpha.3.1` vs
+`0.145.0`) is a **weak** signal and does **not** on its own satisfy F7: it is a coincidence of release
+timing that a CLI upgrade erases, and routing correctness must not rest on two builds staying skewed.
+An env var or an install-path signal satisfies F7; a version string alone does not.
+
+**Results table — to be filled by the session that runs this.**
+
+| # | Result | Evidence |
+|---|---|---|
+| F1 | *not run* | |
+| F2 | *not run* | |
+| F3 | *not run* | |
+| F4 | *not run* | |
+| F4b | *not run* | |
+| F5 | *not run* | |
+| F6 | *not run* | |
+| F7 | *not run* | |
+
+#### Decision rule — pre-registered, honor it
+
+Three outcomes, not two. The middle case is the one the original two-branch rule would have lost.
+
+| Outcome | Result |
+|---|---|
+| **F3 ∧ F4 ∧ F5 ∧ F7 all pass** | Add `codex-app` as its own harness key: `HARNESS_DISPATCH_CAPABILITIES` in **both** `model-tier-config.js` and `model-id-resolver.js` (kept in lockstep), a `## codex-app adapter` section in `references/model-resolution.md`, surface rows in `docs/model-tier-configuration.md` and `references/config-format.md`, and tests mirroring the `codex-cli` ones. The capability values must come from the app's **own** F4 evidence — never copied from the `codex-cli` row |
+| **Any of F3 / F4 / F5 fails** | Document `codex-app` as **skills-only / unsupported for routing**, plainly, here and in the README. No harness key. A partial pass is a fail for the routing gate |
+| **F3–F5 pass but F7 fails** | **Capable but not safely addressable.** No harness key — and record the reason precisely, because it is not a capability gap: with no runtime discriminator, a `codex-app` key would make the app silently resolve the `codex-cli` profile (criterion §5). This is a more useful finding than a flat fail and points at the fix — a discriminator, not more capability |
+
+---
+
 ## Remaining probes
 
 | Probe | Blocked on | Proves |
 |---|---|---|
 | **E2** — multi-turn persona persistence | interactive session | C1 (full) |
-| **F** — ChatGPT desktop app | nothing; build now installs | C8 |
+| **F Part 2** — ChatGPT desktop app | a human at the GUI; workspace + protocol are ready | C8, C11 |
 | **G** — concurrency | nothing | C6 (Cobalt ∥ Sentinel) |
 
 ---
@@ -373,7 +565,8 @@ whole path — install → configure → resolve → announce → dispatch → a
 | §1 routing gate — unattended resolver (C5) | ✅ ran with no approval; exit 3; failure machine-visible |
 | §2 executed-model identity (C4) | ❌ not observable → `unverified` / `addressability_probe` only |
 | §3 live catalog (C7) | ⚠️ spawn-time error enumeration only; `codex debug models` is the wrong source |
-| §4 `codex-app` is separate (C8) | ⏳ unproven — claim nothing for the ChatGPT desktop app |
+| §4 `codex-app` is separate (C8) | ⏳ unproven as a routing surface — but Probe F0b now shows the app ships a **different engine build** (`0.146.0-alpha.3.1` vs `0.145.0`), so §4 is backed by evidence, not only by rule. Claim nothing for the ChatGPT desktop app until Probe F Part 2 runs |
+| §5 surface discriminator (C11) | ⏳ unproven; prior is **weak** — the surfaces share `CODEX_HOME` and `shell_environment_policy.set`, and no surface-identity variable exists in either binary (F0g) |
 
 **Verdict:** `codex-cli` may join `EXPLICIT_DISPATCH_HARNESSES`, but it enters at the
 **`copilot-vscode` evidence tier, not the `copilot-cli` tier** — configuration completes after a
