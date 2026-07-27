@@ -75,7 +75,15 @@ config key that boots the primary session as a named custom agent.
 This confirms the Phase 1 decision: **Vivaldi must be a root-invocable skill**, not a custom agent.
 Codex custom agents (`.codex/agents/*.toml`) are subagent definitions only.
 
-### ⚠️ `multi_agent_v2` is DISABLED on this machine — BLOCKER for C2/C3/C4/C6
+### ⚠️ `multi_agent_v2` is DISABLED on this machine — ~~BLOCKER for C2/C3/C4/C6~~
+
+> **SUPERSEDED 2026-07-27 by Probe I2. The blocker below is wrong.** `model` and `reasoning_effort`
+> are **v1** parameters, present with no feature flag on both surfaces; `--enable multi_agent_v2`
+> merely swaps in a different toolset (`task_name`, `list_agents`, `followup_task`). The reasoning
+> below is preserved as written because it shows the failure mode: an attribution taken from
+> documentation and then treated as measured. The action item it raised — *"record whether per-spawn
+> overrides exist in v1 as well"* — was the right instinct and went unrun for four days while a
+> precondition built on the untested half shipped to users.
 
 `codex features list`:
 
@@ -736,6 +744,83 @@ Three outcomes, not two. The middle case is the one the original two-branch rule
 | **F3 ∧ F4 ∧ F5 ∧ F7 all pass** | Add `codex-app` as its own harness key: `HARNESS_DISPATCH_CAPABILITIES` in **both** `model-tier-config.js` and `model-id-resolver.js` (kept in lockstep), a `## codex-app adapter` section in `references/model-resolution.md`, surface rows in `docs/model-tier-configuration.md` and `references/config-format.md`, and tests mirroring the `codex-cli` ones. The capability values must come from the app's **own** F4 evidence — never copied from the `codex-cli` row |
 | **Any of F3 / F4 / F5 fails** | Document `codex-app` as **skills-only / unsupported for routing**, plainly, here and in the README. No harness key. A partial pass is a fail for the routing gate |
 | **F3–F5 pass but F7 fails** | **Capable but not safely addressable.** No harness key — and record the reason precisely, because it is not a capability gap: with no runtime discriminator, a `codex-app` key would make the app silently resolve the `codex-cli` profile (criterion §5). This is a more useful finding than a flat fail and points at the fix — a discriminator, not more capability |
+
+---
+
+### Probe I — same-day CLI re-probe: **both open questions resolved, both against the record** ⚠️
+
+One `codex exec --sandbox read-only` run on `codex-cli` 0.145.0, **no `--enable` flag**, asking for a
+verbatim tool enumeration and an invalid-model spawn. Run 2026-07-27, minutes after Probe F.
+
+#### I1 — the five-vs-two catalog gap was **entitlement drift, not a surface difference**
+
+```text
+Unknown model `not-a-real-model-xyz` for spawn_agent.
+Available models: gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4
+```
+
+Identical to the app's F4b enumeration. **The confound resolves as drift**: on 2026-07-23 the CLI
+spawn set was `{gpt-5.6-sol, gpt-5.6-terra}`; on 2026-07-27 the same CLI enumerates five. The gap was
+four days of entitlement change, not `codex-app` being more capable.
+
+Three recorded facts are now **stale and must not be relied on**:
+
+- Probe B2's "the spawn set on this account today is `{gpt-5.6-sol, gpt-5.6-terra}` — 2 of the 6
+  listed session models". True when measured; false now.
+- Probe B2's sharpest example — "`gpt-5.4` is a perfectly valid *parent* model yet is **not
+  spawnable**". `gpt-5.4` **is** spawnable today. The *lesson* it illustrated (parent set ≠ spawn set)
+  survives: `gpt-5.4-mini` is still listed and still not spawnable, so the sets remain distinct.
+- The standing **open product question** — "only two spawnable models exist today; five tiers across
+  two models × six efforts is the whole routing space" — was a snapshot of a transient entitlement
+  state, not a property of Codex. It is **withdrawn**, not answered.
+
+**This is the strongest evidence the spike has produced for its own core rule.** The repo already held
+that a catalog is documentation, not an availability source of truth — demonstrated *across surfaces*
+(`codex debug models` ≠ spawn set). It is now demonstrated *across time* on one surface: the
+authoritative set changed underneath a written record in four days. The adapter's requirement to
+re-acquire the spawn set at the spawn boundary, and never cache or hardcode it, is vindicated. It also
+means **a stored assignment can silently become invalid** — which is exactly what the fail-loud
+pre-launch rejection exists to catch.
+
+#### I2 — `multi_agent_v2` is **not** a precondition: the CLI defaults to v1, and v1 carries the actuator
+
+With no `--enable` flag, the CLI session enumerated:
+
+```text
+multi_agent_v1__spawn_agent(fork_context, items, message, model, reasoning_effort, service_tier)
+multi_agent_v1__wait_agent(targets, timeout_ms)
+multi_agent_v1__send_input(interrupt, items, message, target)
+multi_agent_v1__resume_agent(id)
+multi_agent_v1__close_agent(target)
+```
+
+Byte-for-byte the same orchestration toolset the app exposes. **The Step-2 blocker was wrong**, and so
+is the operational precondition shipped on the back of it:
+
+- `model` and `reasoning_effort` are **v1** parameters, available with no feature flag on either
+  surface. The v2 attribution was an inference from documentation that no probe had tested.
+- The v2 toolset recorded in Probe B0 (`spawn_agent(fork_turns, …, task_name)`, `list_agents`,
+  `followup_task`, `send_message`, `interrupt_agent`) is what `--enable multi_agent_v2` *adds*. It is
+  the non-default path.
+- Therefore the `task_name` constraint fixed in `596e91f` is a **v2-only** rule. Default sessions on
+  both surfaces have no `task_name` parameter at all.
+- `README.md`'s "Start the session with `codex --enable multi_agent_v2`" and `dispatch-codex.md`'s
+  hard-block precondition are both **incorrect as shipped** and are corrected in this change.
+
+**The design consequence that matters.** Call shape is determined by **which spawn toolset is
+present (v1 vs v2)**, and the resolver's harness key is determined by **which surface is running**.
+These are *orthogonal*: both surfaces default to v1, and either can be moved to v2 by a flag. Inferring
+the call shape from the surface — the obvious shortcut — would be wrong on both surfaces
+simultaneously. Vivaldi must detect them separately.
+
+#### What Probe I changes about the `codex-app` decision
+
+The decision rule was already satisfied by Probe F (F3 ∧ F4 ∧ F5 ∧ F7), and Probe I does not disturb
+that. But it does change the *justification*, and the record should be honest about it: `codex-app`
+does **not** earn a separate harness key by having a larger spawn catalog — the catalogs are identical
+today. It earns one because the surfaces run **different engine builds** (F0b), are **independently
+discriminable** (F7), and — per I1 — carry catalogs that **drift independently over time**. Binding
+two surfaces to one stored profile is precisely how a stale assignment survives unnoticed.
 
 ---
 

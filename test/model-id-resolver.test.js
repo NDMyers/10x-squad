@@ -555,6 +555,30 @@ test('codex-cli rejects any explicit context_tier (auto only)', () => {
   }
 });
 
+test('codex-app carries its own capability entry, not codex-cli\'s by inheritance', () => {
+  const model = 'gpt-5.6-sol';
+  for (const effort of ['max', 'ultra']) {
+    const plan = verificationPlan({
+      harness: 'codex-app',
+      catalog: catalog([model], 'codex-app'),
+      selections: fiveSelections(model, effort, 'auto'),
+    });
+    assert.deepEqual(plan.verification_targets, [expectedTarget(model, effort, 'auto')]);
+  }
+
+  // The Codex spawn tool takes no context parameter on either surface.
+  const selections = fiveSelections(model);
+  selections.complex = exactSelection(model, 'auto', 'long_context');
+  assert.throws(
+    () => verificationPlan({
+      harness: 'codex-app',
+      catalog: catalog([model], 'codex-app'),
+      selections,
+    }),
+    /context_tier must be one of auto for harness "codex-app"/
+  );
+});
+
 test('copilot-cli rejects the Codex-only ultra effort', () => {
   const model = 'gpt-5.4';
   const selections = fiveSelections(model);

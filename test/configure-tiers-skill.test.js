@@ -580,9 +580,20 @@ test('model resolution defines explicit catalog adapters for every active harnes
       reference.includes('## copilot-vscode adapter'),
       reference.includes('## copilot-cli adapter'),
       reference.includes('## codex-cli adapter'),
+      reference.includes('## codex-app adapter'),
     ],
-    [true, true, true]
+    [true, true, true, true]
   );
+});
+
+test('the codex-app adapter forbids inheriting codex-cli catalog data', () => {
+  const adapter = referenceSection('codex-app adapter');
+  // The surfaces are separate because their spawnable sets drift independently
+  // (spike Probe I1) — not because one was ever measured as larger.
+  assert.match(adapter, /separate surface/i);
+  assert.match(adapter, /Available models/);
+  assert.match(adapter, /Re-acquire rather than cache/i);
+  assert.match(adapter, /never\s+copy a `codex-cli` profile across/i);
 });
 
 test('the codex-cli adapter distinguishes the parent catalog from the spawn catalog', () => {
@@ -592,7 +603,7 @@ test('the codex-cli adapter distinguishes the parent catalog from the spawn cata
   assert.match(adapter, /parent catalog is not the spawn catalog/i);
   assert.match(adapter, /spawn_agent/);
   assert.match(adapter, /Available models/);
-  assert.match(adapter, /multi_agent_v2/);
+  assert.match(adapter, /No feature flag is required/i);
   assert.match(adapter, /only the exact returned slugs/i);
   assert.match(adapter, /no hardcoded fallback|STOP/i);
 });

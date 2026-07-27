@@ -206,6 +206,23 @@ test('only copilot-cli supports explicit dispatch settings', () => {
   assert.equal(validateProfile(automatic, { harness: 'unknown-surface' }).ok, true);
 });
 
+test('codex-app is its own harness key with the same Codex vocabulary', () => {
+  // Separate key by design: the surfaces run different engine builds and their
+  // spawnable sets drift independently (spike Probe F0b/I1), so a profile stored
+  // for one must never resolve for the other.
+  for (const effort of ['max', 'ultra']) {
+    const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings(effort, 'auto') });
+    assert.equal(validateProfile(p, { harness: 'codex-app' }).ok, true, effort);
+  }
+
+  for (const contextTier of ['default', 'long_context']) {
+    const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings('high', contextTier) });
+    const result = validateProfile(p, { harness: 'codex-app' });
+    assert.equal(result.ok, false, contextTier);
+    assert.match(result.errors.join('; '), /context_tier must be one of auto for harness "codex-app"/);
+  }
+});
+
 test('codex-cli accepts max/ultra reasoning but only auto context_tier', () => {
   for (const effort of ['max', 'ultra']) {
     const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings(effort, 'auto') });

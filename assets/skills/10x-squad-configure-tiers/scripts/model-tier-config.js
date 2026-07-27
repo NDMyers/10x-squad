@@ -38,6 +38,15 @@ const HARNESS_DISPATCH_CAPABILITIES = {
     reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
     context_tier: new Set(['auto']),
   },
+  // Same vocabulary as codex-cli, established from codex-app's own evidence
+  // (Probe F) rather than copied: its spawn tool takes model + reasoning_effort
+  // and no context parameter, and its catalog reports the same effort levels.
+  // Separate key because the surfaces run different engine builds and their
+  // spawnable sets drift independently (docs/codex-harness-spike.md, Probe I1).
+  'codex-app': {
+    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+    context_tier: new Set(['auto']),
+  },
 };
 const DEFAULT_DISPATCH_CAPABILITY = {
   reasoning_effort: new Set(['auto']),

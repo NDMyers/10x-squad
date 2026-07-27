@@ -38,9 +38,43 @@ Acquire one catalog for the active harness and retain this shape in session stat
 
 1. Acquire the **parent** catalog with `codex debug models` — machine-readable JSON, non-billable, no dispatch needed. Take `models[]` entries where `visibility === "list"` and use each `slug` as the exact identifier; entries with `visibility: "hide"` (e.g. `codex-auto-review`) are excluded.
 2. **The parent catalog is not the spawn catalog.** `codex debug models` lists every parent-selectable model; `spawn_agent` accepts a strictly smaller set (on the reference account, `{gpt-5.6-sol, gpt-5.6-terra}` versus six listed). Because Vivaldi routes personas through `spawn_agent`, the **assignment identifiers must be spawnable models**, not merely listed ones.
-3. Acquire the authoritative spawn set from the spawn boundary: an invalid `spawn_agent` `model` is rejected before child launch with an `Available models:` list (e.g. `Unknown model \`x\` for spawn_agent. Available models: gpt-5.6-sol, gpt-5.6-terra`). That enumerated list is the source of truth for what a persona dispatch can address. `multi_agent_v2` must be enabled for `spawn_agent` to exist.
+3. Acquire the authoritative spawn set from the spawn boundary: an invalid `spawn_agent` `model` is rejected before child launch with an `Available models:` list (e.g. `Unknown model \`x\` for spawn_agent. Available models: gpt-5.6-sol, gpt-5.6-terra`). That enumerated list is the source of truth for what a persona dispatch can address. No feature flag is required: the spawn tool carrying `model` and `reasoning_effort` is present by default (`multi_agent_v2` swaps in a different toolset, it does not supply the actuator).
 4. Convert only the exact returned slugs into `catalog.models`; never supplement from `codex debug models` alone, documentation, another surface, or memory. There is no `Auto` entry to exclude on this surface.
-5. If neither source returns a reliable list, STOP and show the raw harness error. No hardcoded fallback.
+5. Re-acquire rather than cache: the spawn set is account- and time-dependent and has been observed to change within days, invalidating a written record. A stored assignment can become unspawnable with no local change.
+6. If neither source returns a reliable list, STOP and show the raw harness error. No hardcoded fallback.
+
+## codex-app adapter
+
+The ChatGPT desktop app is a **separate surface** with its own profile and its own catalog. It is not
+a skin over the CLI: it ships its own engine build, and the two surfaces' spawnable sets have been
+observed to differ from each other's *recorded* values because entitlement drifts over time. Never
+copy a `codex-cli` profile across, and never assume the two catalogs match today because they matched
+before.
+
+1. Acquire the **parent** catalog with `codex debug models` exactly as for `codex-cli` — the app's own
+   engine answers it, and on the reference account it returned an identical parent list.
+2. **The parent catalog is not the spawn catalog** here either. Acquire the authoritative spawn set
+   from the spawn boundary: an invalid `model` is rejected before child launch with an
+   `Available models:` enumeration. That list is the source of truth for what a persona dispatch can
+   address on this surface.
+3. Convert only the exact returned slugs into `catalog.models`; never supplement from
+   `codex debug models` alone, from the `codex-cli` profile, from documentation, or from memory.
+4. Re-acquire rather than cache. The spawn set is account- and time-dependent: on the reference
+   account it went from two entries to five in four days, which invalidated a written record. A stored
+   assignment can therefore become unspawnable with no local change; the fail-loud pre-launch
+   rejection is what catches it.
+5. If neither source returns a reliable list, STOP and show the raw harness error. No hardcoded
+   fallback.
+
+Runtime settings match `codex-cli`'s vocabulary — reasoning `auto|low|medium|high|xhigh|max|ultra`,
+`context_tier` `auto` only — but that is a conclusion drawn from this surface's own spawn signature
+and catalog, not an inheritance. The per-model `supported_reasoning_levels` check below applies here
+unchanged.
+
+Detecting which surface is active is Vivaldi's job at dispatch time, not the skill's; the skill asks
+once when uncertain. The signal is `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` corroborated by
+`/Applications/ChatGPT.app/` on `PATH`. The `codex` binary path and `codex --version` do **not**
+discriminate — both surfaces resolve the same standalone binary on `PATH`.
 
 Codex reasoning-effort legality is **per model**: `codex debug models` reports each model's `supported_reasoning_levels`, and the same value is validated at spawn time (`Reasoning effort \`x\` is not supported for model \`gpt-5.6-sol\`. Supported reasoning efforts: …`). When a tier's `reasoning_effort` is explicit, confirm it is in the chosen model's supported set before writing. The dependency-free engine validates only the harness-level vocabulary; this per-model check is the skill's responsibility because only the skill holds the live catalog. See `docs/codex-harness-spike.md` (C4/C7/C9) for evidence and for why executed-model identity is not observable on Codex.
 
@@ -64,11 +98,12 @@ Each resolved model selection also needs explicit-or-`auto` choices for `reasoni
 |---|---|---|
 | `copilot-cli` | `auto\|low\|medium\|high\|xhigh` | `auto\|default\|long_context` |
 | `codex-cli` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
+| `codex-app` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
 | `copilot-vscode`, unknown | `auto` only | `auto` only |
 
 `auto` means independently omit that corresponding dispatch parameter and allow the active harness's adaptive or default behavior. It is not Copilot model Auto and is not parent inheritance. `long_context` is a Copilot named tier; never promise a numeric context size. `context_tier` has no Codex analog — Codex `spawn_agent` takes only `model` and `reasoning_effort`, so `codex-cli` accepts `auto` alone.
 
-`copilot-cli` and `codex-cli` support explicit values (within their columns above); on `codex-cli`, an explicit `reasoning_effort` must additionally be in the chosen model's `supported_reasoning_levels`. For `copilot-vscode` or an unknown harness, only `auto`/`auto` is allowed. If a setting is outside its harness column, hard-stop before any probe, preview, or write.
+`copilot-cli`, `codex-cli`, and `codex-app` support explicit values (within their columns above); on both Codex surfaces, an explicit `reasoning_effort` must additionally be in the chosen model's `supported_reasoning_levels`. For `copilot-vscode` or an unknown harness, only `auto`/`auto` is allowed. If a setting is outside its harness column, hard-stop before any probe, preview, or write.
 
 ## Executable resolver and probe contract
 

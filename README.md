@@ -31,13 +31,17 @@ node bin/10x-squad.js install --directory <workspace-root>
 | `copilot` | `10x-squad` custom agent | `.github/agents/`, `.github/skills/` |
 | `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/` |
 
-**Codex operating notes.** Codex has no flag to boot the primary session as a custom agent, so
-Vivaldi is a skill invoked at the **root** session (`$10x-squad-vivaldi`) — persona subagents spawn
-at depth 1 from there. Start the session with `codex --enable multi_agent_v2`; the per-dispatch
-`model` / `reasoning_effort` actuator lives behind that flag and it ships disabled. Vivaldi sets
-`allow_implicit_invocation: false`, so it never fires on an unrelated request and does not appear in
-the ambient skill list — invoke it by name. Evidence and surface limits:
-`docs/codex-harness-spike.md`.
+**Codex operating notes.** One Codex install serves **two surfaces** — the Codex CLI (`codex-cli`)
+and the ChatGPT desktop app (`codex-app`, launched with `codex app <path>`). Both are supported;
+each keeps its own routing profile, because they run different engine builds and their spawnable
+model sets drift independently. Vivaldi detects which one it is on at runtime.
+
+Codex has no flag to boot the primary session as a custom agent, so Vivaldi is a skill invoked at the
+**root** session (`$10x-squad-vivaldi`) — persona subagents spawn at depth 1 from there. No feature
+flag is needed: the per-dispatch `model` / `reasoning_effort` actuator is available by default on
+both surfaces. Vivaldi sets `allow_implicit_invocation: false`, so it never fires on an unrelated
+request and does not appear in the ambient skill list — invoke it by name. Evidence and surface
+limits: `docs/codex-harness-spike.md`.
 
 ## Model routing
 

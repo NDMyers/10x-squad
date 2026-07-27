@@ -33,13 +33,26 @@ Each harness has its own profile and identifier namespace — never reuse identi
 | Copilot CLI | `copilot-cli` | **Supported — actuator proven** (see `model-routing-harness-spike.md`) | exact slugs returned by the CLI |
 | VS Code Copilot | `copilot-vscode` | **Catalog discovery and exact-label addressability proven; verified exact-routing gate not passed** — addressability-only probes stay unverified | picker display strings |
 | Codex CLI | `codex-cli` | **Supported at the unverified tier** — per-dispatch model + reasoning proven, but executed-model identity is not observable, so probes stay `unverified` (see `codex-harness-spike.md`) | spawnable model slugs |
+| ChatGPT desktop app | `codex-app` | **Supported at the unverified tier** — spawn, per-dispatch model + reasoning, fail-loud, and unattended resolver all proven on this surface (Probe F); executed-model identity is not observable here either | spawnable model slugs, acquired on this surface |
 
-Explicit dispatch settings by surface: `copilot-cli` accepts both settings; `codex-cli` accepts explicit `reasoning_effort` but only `auto` `context_tier` (Codex `spawn_agent` has no context parameter); `copilot-vscode` and unknown harnesses allow `auto`/`auto` only. A setting outside its surface's vocabulary hard-stops before any probe, preview, or write. Accepted vocabularies:
+The two Codex surfaces are deliberately kept separate. They run different engine builds
+(`0.145.0` vs `0.146.0-alpha.3.1` on the reference machine), and their spawnable model sets drift
+independently over time — one surface's set changed from two entries to five in four days — so a
+profile configured for one is not valid for the other. Vivaldi detects the active surface at runtime
+from `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, corroborated by `/Applications/ChatGPT.app/` on `PATH`;
+the `codex` binary path and `codex --version` do **not** discriminate.
+
+Explicit dispatch settings by surface: `copilot-cli` accepts both settings; `codex-cli` and
+`codex-app` accept explicit `reasoning_effort` but only `auto` `context_tier` (the Codex spawn tool
+has no context parameter); `copilot-vscode` and unknown harnesses allow `auto`/`auto` only. A setting
+outside its surface's vocabulary hard-stops before any probe, preview, or write. Accepted
+vocabularies:
 
 | Surface | `reasoning_effort` | `context_tier` |
 |---|---|---|
 | `copilot-cli` | `auto\|low\|medium\|high\|xhigh` | `auto\|default\|long_context` |
 | `codex-cli` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
+| `codex-app` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
 | `copilot-vscode`, unknown | `auto` only | `auto` only |
 
 Example values in docs are illustrative shapes, never defaults or a selectable list. Catalog/doc presence ≠ availability: entitlement, authentication, and the active session filter the real list. On the CLI, the authoritative list comes from the harness itself (e.g., a failed dispatch error enumerates entitled models; `/subagents` shows per-agent choices). On VS Code, a live invalid `runSubagent` call rejected the identifier before child launch and returned that active session's selectable labels. A later exact picker-label no-op returned `MODEL_ROUTE_OK`, proving that label was addressable in the tested session.

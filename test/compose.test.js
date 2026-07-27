@@ -81,18 +81,41 @@ test('dispatch sections do not cross surfaces', () => {
   }
 
   // ...and Codex's must not appear in Copilot's.
-  for (const codexOnly of ['spawn_agent', 'multi_agent_v2', 'wait_agent']) {
+  for (const codexOnly of ['spawn_agent', 'codex-app', 'wait_agent']) {
     assert.ok(!copilot.includes(codexOnly), `Copilot entrypoint must not reference ${codexOnly}`);
   }
+});
+
+test('the Codex dispatch contract separates surface detection from call shape', () => {
+  const codex = composeVivaldi('codex');
+
+  // Probe I2: both surfaces default to the v1 toolset and either can be moved to
+  // v2 by a flag, so the call shape does NOT follow from the surface. Conflating
+  // them would be wrong on both surfaces at once.
+  assert.match(codex, /Detect each separately\. Neither predicts the other\./);
+
+  // v1 has no task_name and its wait is keyed by the returned agent_id, which is
+  // unrecoverable once discarded (no list_agents on that toolset).
+  assert.match(codex, /no `task_name` parameter/, 'must state that v1 has no task_name');
+  assert.match(codex, /agent_id/, 'must state how a v1 child is collected');
+
+  // The two signals that do NOT discriminate — both surfaces resolve the same
+  // binary on PATH and report the same version.
+  assert.match(
+    codex,
+    /Do not use the `codex` binary path or `codex --version` to identify the surface/,
+    'must rule out the two signals that failed in Probe F7'
+  );
 });
 
 test('the Codex dispatch contract states its surface limits', () => {
   const codex = composeVivaldi('codex');
 
   // Each of these is a spike finding that must survive editing.
-  assert.match(codex, /--harness codex-cli/, 'must resolve with the codex-cli harness key');
+  assert.match(codex, /--harness <detected-surface>/, 'must resolve with the detected surface, not a hardcoded key');
+  assert.match(codex, /CODEX_INTERNAL_ORIGINATOR_OVERRIDE/, 'must state the surface discriminator (C11)');
   assert.match(codex, /root session only/i, 'must require the root session (max_depth defaults to 1)');
-  assert.match(codex, /multi_agent_v2/, 'must state the feature-flag precondition');
+  assert.match(codex, /model.*and.*reasoning_effort.*must exist/i, 'must gate on the actuator existing, not on a feature flag');
   assert.match(codex, /no agent-name or `agent_type` parameter/i, 'must state that custom agent TOMLs are unaddressable');
   assert.match(codex, /Never claim executed-model verification on Codex/i, 'must forbid claiming identity verification');
   assert.match(codex, /`context_tier` has no Codex analog|context_tier` resolves to `auto`/, 'must neutralize context_tier');
