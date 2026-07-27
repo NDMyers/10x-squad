@@ -40,10 +40,10 @@ claimed only when direct evidence supports it.
 | C5 | Does the resolver run unattended? | `node …/model-tier-config.js resolve` runs with no per-call approval; a decline is machine-visible | ✅ **PASSED** |
 | C6 | Depth + concurrency | Root Vivaldi → depth-1 personas spawn; Cobalt ∥ Sentinel both run | **PARTIAL** — depth-1 spawn proven; concurrency untested |
 | C7 | Catalog discovery | Live, reliable, machine-readable list from the harness | ⚠️ **REVISED** — session catalog ≠ spawn catalog |
-| C8 | ChatGPT desktop app parity | Loads `.agents/skills/`; spawns subagents with per-dispatch `model`/`reasoning_effort`; executes shell unattended | **PENDING** — free half recorded (Probe F Part 1); F3/F4/F5 need the GUI |
+| C8 | ChatGPT desktop app parity | Loads `.agents/skills/`; spawns subagents with per-dispatch `model`/`reasoning_effort`; executes shell unattended | ✅ **PASSED** at the *unverified* tier (Probe F) — via `multi_agent_v1`, not v2; executed-model identity still unobservable |
 | C9 | Accepted `reasoning_effort` vocabulary | Exact set accepted at the spawn boundary | ✅ **PASSED** — enforced per model at spawn |
 | C10 | Are `.codex/agents/*.toml` dispatch targets? | `spawn_agent` can address a custom agent by name | ❌ **FAILED** — no agent-name parameter exists |
-| C11 | Surface discriminator — can Vivaldi tell `codex-app` from `codex-cli` at runtime? | A deterministic signal observable from an agent-run shell command | **PENDING** (interactive, Probe F7) |
+| C11 | Surface discriminator — can Vivaldi tell `codex-app` from `codex-cli` at runtime? | A deterministic signal observable from an agent-run shell command | ✅ **PASSED** — `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop`, corroborated by `PATH`; binary-path and version signals **failed** |
 
 ---
 
@@ -527,12 +527,205 @@ An env var or an install-path signal satisfies F7; a version string alone does n
 |---|---|---|
 | F1 | *not run* | |
 | F2 | *not run* | |
-| F3 | *not run* | |
-| F4 | *not run* | |
-| F4b | *not run* | |
-| F5 | *not run* | |
-| F6 | *not run* | |
-| F7 | *not run* | |
+| F3 | ✅ **PASSED — but under `multi_agent_v1`, not v2** | tool enumeration, 2026-07-27, below |
+| F4 | ✅ **PASSED** — both parameters accepted, child ran | below |
+| F4b | ✅ **PASSED** (fail-loud) — and revealed a **5-model** spawn catalog | below |
+| F5 | ✅ **PASSED** — unattended, exit 0, correct JSON | below |
+| F6 | ✅ **PASSED** — identical profile resolution | below |
+| F7 | ✅ **PASSED** — `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop`, corroborated by `PATH` | below |
+
+##### F3 — RECORDED 2026-07-27: `spawn_agent` exists, and **v1 carries the actuator**
+
+Launched with `codex app --enable multi_agent_v2 /tmp/codex-app-probe`. The session enumerated its
+own tools. The orchestration namespace it reported is **`multi_agent_v1__`**:
+
+```text
+multi_agent_v1__spawn_agent(fork_context, items, message, model, reasoning_effort, service_tier)
+multi_agent_v1__wait_agent(targets, timeout_ms)
+multi_agent_v1__send_input(interrupt, items, message, target)
+multi_agent_v1__resume_agent(id)
+multi_agent_v1__close_agent(target)
+```
+
+Shell execution is present as
+`exec_command(cmd, justification, login, max_output_tokens, prefix_rule, sandbox_permissions, shell, tty, workdir, yield_time_ms)`.
+
+**Finding 1 — a recorded surface fact is falsified, within a stated scope.** Step 2 recorded that the
+per-spawn `model` / `reasoning_effort` override "is documented as part of the **v2** orchestration
+toolset", and flagged as an open action: *"record whether per-spawn overrides exist in v1 as well."*
+This answers it. **On the app engine (`0.146.0-alpha.3.1`), `multi_agent_v1__spawn_agent` carries both
+`model` and `reasoning_effort` as first-class parameters.** The actuator is not v2-exclusive.
+
+Scope discipline: this is evidence about **v1 on the app engine only**. It does **not** establish that
+`codex-cli` 0.145.0's v1 carries them — that surface was only ever probed with v2 forced on. The
+correct correction to Step 2 is "the v2-only attribution was an inference from documentation and is
+now known to be false on at least one surface", **not** "v1 works everywhere".
+
+**Finding 2 — `--enable multi_agent_v2` did not produce v2 tools in the app.** The v2 toolset has a
+different shape (`followup_task`, `interrupt_agent`, `list_agents`, `send_message` — Probe B0); what
+appeared is unambiguously v1 (`send_input`, `resume_agent`, `close_agent`). So either the launcher
+does not thread `--enable` into the app session, or the app pins v1. **F0e's pass-through is therefore
+unproven in practice**, and the app's dispatch contract must be treated as v1's.
+
+**Finding 3 — the v1 spawn signature differs from v2's, and the differences bite.**
+
+| | CLI, v2 (Probe B0) | App, v1 (F3) |
+|---|---|---|
+| spawn params | `fork_turns, message, model, reasoning_effort, task_name` | `fork_context, items, message, model, reasoning_effort, service_tier` |
+| child naming | `task_name` (lowercase `snake_case` enforced) | **none** |
+| wait | `wait_agent(timeout_ms)` | `wait_agent(targets, timeout_ms)` |
+| enumerate children | `list_agents(path_prefix)` | **absent** |
+| extra | — | `items`, `service_tier` |
+
+Consequences if `codex-app` is ever added: the `task_name` guidance committed for `codex-cli`
+(`596e91f`) **does not apply here** — there is no such parameter; `wait_agent` needs an explicit
+`targets` value, so the spawn result must be captured; and there is no `list_agents` fallback for
+recovering a lost child handle. `service_tier` is a new, unexamined dispatch dimension — do not pass
+it speculatively.
+
+**Finding 4 — a second, app-only dispatch surface exists.** `codex_app__create_thread(model, prompt,
+target, thinking)` and `codex_app__send_message_to_thread(hostId, model, prompt, thinking, threadId)`
+also take a per-call `model`. This is a distinct routing actuator with no CLI analogue. Recorded, not
+probed; out of scope for C8 and not to be assumed equivalent to a subagent dispatch.
+
+##### F4 — RECORDED 2026-07-27: the routing actuator works on the app
+
+```text
+multi_agent_v1__spawn_agent(model="gpt-5.6-sol", reasoning_effort="ultra",
+                            message="Reply with exactly CHILD_OK")
+  → {"agent_id":"019fa4f1-90f0-7fb3-a8c7-55bcf4cb52bb","nickname":"James"}
+
+multi_agent_v1__wait_agent(targets=["019fa4f1-90f0-7fb3-a8c7-55bcf4cb52bb"])
+  → {"status":{"019fa4f1-90f0-7fb3-a8c7-55bcf4cb52bb":{"completed":"CHILD_OK"}},"timed_out":false}
+```
+
+**C2's analogue passes on `codex-app`:** a per-dispatch `model` and `reasoning_effort` were accepted
+and the child ran to completion. Child handles are server-assigned UUIDs plus a human `nickname`
+("James") — there is no caller-supplied name, confirming F3's Finding 3. `wait_agent` is keyed by
+`agent_id`, so a dispatcher **must** retain the spawn return; with no `list_agents` on this surface,
+a lost handle is unrecoverable.
+
+**C4's analogue fails here too.** The spawn result carries `agent_id` and `nickname`; the wait result
+carries completion status. **No field in either identifies the model the child executed on.**
+`codex-app` therefore sits at the same `unverified` / `addressability_probe` tier as `codex-cli` and
+`copilot-vscode`. Never claim executed-model verification on the ChatGPT app either.
+
+##### F4b — RECORDED 2026-07-27: fail-loud passes, and the spawn catalog is **bigger** ⚠️
+
+```text
+multi_agent_v1__spawn_agent(model="not-a-real-model-xyz", …)
+  → Unknown model `not-a-real-model-xyz` for spawn_agent.
+    Available models: gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4
+```
+
+Rejected **before** launch, no child started, **no silent substitution** — C3's analogue passes, and
+the error enumerates the accepted set, so the surface carries its own authoritative availability
+source exactly as `codex-cli` does.
+
+**The consequential finding, stated with its confound.** The enumerated app spawn set is **five**
+models — `{gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4}` — against the **two** that
+`codex-cli` enumerated in Probe B2, `{gpt-5.6-sol, gpt-5.6-terra}`. `gpt-5.4` in particular was
+explicitly *rejected* as a child on the CLI.
+
+> ⚠️ **Do not yet attribute this to the surface.** The CLI figure was measured **2026-07-23** and the
+> app figure **2026-07-27**. Entitlement is account-and-time-dependent, and this repo has already
+> recorded once that a catalog is not an availability source of truth. The gap is therefore
+> **confounded**: it is consistent with a genuine surface difference *and* with the account's spawn
+> entitlement widening over four days. **A same-day CLI re-probe is required before either reading is
+> recorded.** Whichever way it resolves, the result is worth having: a surface difference is direct
+> §4 evidence, and a drift finding is direct evidence that spawn catalogs must be re-acquired rather
+> than cached.
+
+**If it resolves as a surface difference, it also answers the standing product question.** The open
+item — "five work tiers across two spawnable models is the entire Codex routing space" — would be a
+`codex-cli` constraint, not a Codex one: five spawnable models on the app restores genuine
+model-axis tier differentiation instead of forcing everything onto the reasoning-effort axis.
+
+**Finding 5 — C11 may be satisfiable without an env var.** The app session exposes a
+`codex_app__*` tool family (16 tools) that the CLI's enumeration (Probe B0) did not contain, and it
+names its orchestration namespace `multi_agent_v1__` where the CLI reported bare `spawn_agent`. An
+agent can observe its own tool list directly, with no shell call — which is a **stronger** kind of
+signal than an env var, since it is the agent's own capability surface. **Not yet a pass:** F7 must
+still confirm the negative half on the CLI (that `codex_app__*` is absent there) rather than relying
+on Probe B0, whose enumeration was v2 and not written to answer this question.
+
+##### F5 / F6 — RECORDED 2026-07-27: resolver runs unattended, config resolves identically
+
+```text
+node .agents/skills/10x-squad-configure-tiers/scripts/model-tier-config.js resolve \
+  --workspace-root "$PWD" --harness codex-cli --tier trivial --json
+
+stdout:    {"ok":true,"schema_version":2,"scope":"workspace","harness":"codex-cli","tier":"trivial",
+            "model":"gpt-5.6-terra","check_status":"unverified","reasoning_effort":"low","context_tier":"auto"}
+stderr:    (empty)
+exit code: 0
+approval prompt: none appeared
+```
+
+**F5 passes** — C5's analogue holds on the app: the installed resolver executes with no per-call
+approval and the exit-code contract works unmodified. **F6 passes** — the app read
+`.10x-squad/model-routing.json` and reported all five tiers exactly as the CLI resolves them
+(`gpt-5.6-terra` low / `gpt-5.6-terra` medium / `gpt-5.6-sol` high / `gpt-5.6-sol` high /
+`gpt-5.6-sol` ultra, contexts all `auto`). Workspace config, project trust, and profile resolution
+are shared state across the two surfaces.
+
+Note what F6 also demonstrates, since it is the hazard criterion §5 was written for: the app happily
+resolved a profile stored under the **`codex-cli`** key. Nothing in the surface stops it.
+
+##### F7 — RECORDED 2026-07-27: a discriminator exists ✅
+
+App-side (agent shell inside the ChatGPT app), squad-relevant lines only — the raw dump also carried
+live credentials inherited from the user's login shell and is **deliberately not reproduced here**:
+
+```text
+CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop
+CODEX_CI=1
+CODEX_SANDBOX=seatbelt
+CODEX_THREAD_ID=019fa4f5-c53d-79f0-9172-c93a611e5247
+__CFBundleIdentifier=com.openai.codex
+PATH=…:/Applications/ChatGPT.app/Contents/Resources
+command -v codex  → /Users/ndmyers/.local/bin/codex
+codex --version   → codex-cli 0.145.0
+CODEX_HOME                  → unset
+CODEX_MANAGED_PACKAGE_ROOT  → unset
+```
+
+CLI-side negative half, obtained **free** via `codex sandbox env` (runs a command under the CLI's own
+seatbelt path with no model call — the cheap trick that avoided a billable `codex exec`):
+
+```text
+CODEX_SANDBOX=seatbelt
+CODEX_SANDBOX_NETWORK_DISABLED=1
+__CFBundleIdentifier=com.apple.Terminal
+PATH=/Users/ndmyers/.codex/tmp/arg0/…:/Users/ndmyers/.codex/packages/standalone/releases/0.145.0-aarch64-apple-darwin/codex-path:…
+(no CODEX_INTERNAL_ORIGINATOR_OVERRIDE, no CODEX_CI)
+```
+
+| Candidate | App | CLI | Verdict |
+|---|---|---|---|
+| `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` | `Codex Desktop` | absent | ✅ **primary** — names the surface directly |
+| `PATH` contains `/Applications/ChatGPT.app/Contents/Resources` | yes | no (carries `.codex/packages/standalone/releases/<ver>/codex-path`) | ✅ **corroborating** |
+| `__CFBundleIdentifier` | `com.openai.codex` | `com.apple.Terminal` | ⚠️ reflects the *launching* app, not the surface — fragile |
+| engine version via `codex --version` | **`0.145.0`** | `0.145.0` | ❌ **fails** |
+| `codex` binary path | `~/.local/bin/codex` | `~/.local/bin/codex` | ❌ **fails** |
+
+**Two pre-probe predictions were wrong, and it matters.** The F7 pass bar named "a `codex` path
+resolving inside `/Applications/ChatGPT.app/`" as a candidate — it does not: the app's shell resolves
+`codex` to the *standalone CLI* at `~/.local/bin/codex`, which also reports `0.145.0`. So the engine
+the app's chat session runs on is **not** the engine its shell would invoke, and the version-skew
+signal recorded as "weak" in Part 1 is not weak but **absent** at the shell. Anything built on either
+would have been silently wrong.
+
+**Verdict: F7 passes on `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, with a stated reservation.** The
+variable is deterministic, agent-observable without a shell round-trip through any private API, and
+semantically exactly right. But its name declares it `INTERNAL` and an `OVERRIDE`: it is not a
+contract, and being an override it can in principle be set by a user on the CLI, which would defeat a
+naive equality check. Detection should therefore treat the `PATH` signal as corroboration and
+**fail loud on conflicting signals** rather than silently preferring one.
+
+Method caveat: the CLI half came from `codex sandbox`, not from an agent-session shell tool. It is the
+same binary applying the same `shell_environment_policy`, so the inference is strong, but it is one
+inferential step short of a same-surface comparison. A future `codex exec` run should confirm it.
 
 #### Decision rule — pre-registered, honor it
 
