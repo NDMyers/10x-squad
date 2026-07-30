@@ -1,0 +1,2 @@
+name: 10x-squad
+description: "Multi-agent development pipeline with Vivaldi (orchestrator), Einstein (deliberation), Peter (spec), Linus (build), Cobalt (review), Ralph (test). Use for feature development, bug fixes, refactors, and architectural changes."

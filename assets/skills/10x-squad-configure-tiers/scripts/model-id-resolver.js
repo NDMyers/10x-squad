@@ -8,9 +8,43 @@ const INHERIT_REASON = 'inherit is not an executable model identifier';
 const AUTO = /^auto(?:\s*\([^)]*\))?$/iu;
 const INHERIT = /^inherit(?:\s*\([^)]*\))?$/iu;
 const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
-const REASONING_EFFORTS = ['auto', 'low', 'medium', 'high', 'xhigh'];
-const CONTEXT_TIERS = ['auto', 'default', 'long_context'];
-const EXPLICIT_DISPATCH_HARNESSES = new Set(['copilot-cli']);
+// Per-harness runtime-setting vocabulary — kept in lockstep with the identical
+// map in model-tier-config.js. A harness absent from the map allows only
+// `auto`/`auto`. Per-MODEL reasoning-effort legality is a live-catalog fact
+// enforced during resolution against the acquired catalog and finally by the
+// harness at spawn time; it is never hardcoded here.
+const HARNESS_DISPATCH_CAPABILITIES = {
+  'copilot-cli': {
+    reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh'],
+    context_tier: ['auto', 'default', 'long_context'],
+  },
+  'codex-cli': {
+    reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    context_tier: ['auto'],
+  },
+  // Same vocabulary as codex-cli, established from codex-app's own evidence
+  // (Probe F) rather than copied: its spawn tool takes model + reasoning_effort
+  // and no context parameter, and its catalog reports the same effort levels.
+  // Separate key because the surfaces run different engine builds and their
+  // spawnable sets drift independently (docs/codex-harness-spike.md, Probe I1).
+  'codex-app': {
+    reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    context_tier: ['auto'],
+  },
+};
+const DEFAULT_DISPATCH_CAPABILITY = {
+  reasoning_effort: ['auto'],
+  context_tier: ['auto'],
+};
+
+function dispatchCapability(harness) {
+  // Object.hasOwn, not a bare lookup: a harness literally named "__proto__" (or
+  // another inherited key) must fall through to the default, not resolve to
+  // Object.prototype.
+  return typeof harness === 'string' && Object.hasOwn(HARNESS_DISPATCH_CAPABILITIES, harness)
+    ? HARNESS_DISPATCH_CAPABILITIES[harness]
+    : DEFAULT_DISPATCH_CAPABILITY;
+}
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -189,10 +223,12 @@ function resolvedAssignments(request) {
   return assignments;
 }
 
-function resolvedDispatchSettings(selections) {
+function resolvedDispatchSettings(selections, harness) {
   if (!isPlainObject(selections)) {
     throw new Error('selections must be an object');
   }
+  const cap = dispatchCapability(harness);
+  const forHarness = `for harness ${JSON.stringify(harness ?? 'unknown')}`;
   const keys = Object.keys(selections);
   if (
     keys.length !== TIER_KEYS.length
@@ -217,14 +253,14 @@ function resolvedDispatchSettings(selections) {
       selection,
       'context_tier'
     ) ? selection.context_tier : 'auto';
-    if (!REASONING_EFFORTS.includes(reasoningEffort)) {
+    if (!cap.reasoning_effort.includes(reasoningEffort)) {
       throw new Error(
-        `selection for ${tier} reasoning_effort must be one of ${REASONING_EFFORTS.join(', ')}`
+        `selection for ${tier} reasoning_effort must be one of ${cap.reasoning_effort.join(', ')} ${forHarness}`
       );
     }
-    if (!CONTEXT_TIERS.includes(contextTier)) {
+    if (!cap.context_tier.includes(contextTier)) {
       throw new Error(
-        `selection for ${tier} context_tier must be one of ${CONTEXT_TIERS.join(', ')}`
+        `selection for ${tier} context_tier must be one of ${cap.context_tier.join(', ')} ${forHarness}`
       );
     }
     dispatchSettings[tier] = {
@@ -266,22 +302,12 @@ function uniqueVerificationTargets(assignments, dispatchSettings) {
   return targets;
 }
 
-function assertHarnessSupportsDispatchSettings(harness, dispatchSettings) {
-  const hasExplicitSetting = TIER_KEYS.some((tier) => (
-    dispatchSettings[tier].reasoning_effort !== 'auto'
-    || dispatchSettings[tier].context_tier !== 'auto'
-  ));
-  if (hasExplicitSetting && !EXPLICIT_DISPATCH_HARNESSES.has(harness)) {
-    throw new Error(
-      `harness ${JSON.stringify(harness)} does not support explicit runtime settings`
-    );
-  }
-}
-
 function verificationPlan(request) {
   const assignments = resolvedAssignments(request);
-  const dispatchSettings = resolvedDispatchSettings(request.selections);
-  assertHarnessSupportsDispatchSettings(request.harness, dispatchSettings);
+  // Vocabulary is enforced per harness inside resolvedDispatchSettings: a
+  // harness that supports only `auto`/`auto` rejects any explicit value there,
+  // which subsumes the former "does not support explicit settings" guard.
+  const dispatchSettings = resolvedDispatchSettings(request.selections, request.harness);
   return {
     assignments,
     dispatch_settings: dispatchSettings,

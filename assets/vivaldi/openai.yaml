@@ -1,0 +1,9 @@
+interface:
+  display_name: "10x Squad — Vivaldi"
+  short_description: "Orchestrate the 10x Squad development pipeline"
+  default_prompt: "Use $10x-squad-vivaldi to run this task through the 10x Squad pipeline."
+policy:
+  # Vivaldi takes over the session and drives a multi-step pipeline with
+  # subagent dispatches. That must be a deliberate choice, never an implicit
+  # match against an unrelated request.
+  allow_implicit_invocation: false

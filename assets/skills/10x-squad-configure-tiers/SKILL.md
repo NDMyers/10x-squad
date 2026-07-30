@@ -18,7 +18,7 @@ It never runs automatically during a healthy pipeline.
 
 ## Start the conversation
 
-1. Detect the active harness (`copilot-vscode`, `copilot-cli`, …). If uncertain, ask once. Never guess or reuse another surface's identifier namespace.
+1. Detect the active harness (`copilot-vscode`, `copilot-cli`, `codex-cli`, `codex-app`, …). If uncertain, ask once. Never guess or reuse another surface's identifier namespace — Copilot and Codex model identifiers are not interchangeable, and the two Codex surfaces are separate from each other because their spawnable sets drift independently.
 2. Show the current effective mapping by running `resolve` for all five tiers and displaying model, reasoning, context, check status, and source scope in a five-row table. Show actionable resolution errors.
 3. Ask for user-global or current-workspace scope. A workspace profile replaces that harness's global profile wholesale and must contain all five keys.
 4. Offer these actions:
@@ -42,11 +42,11 @@ Read-only review stops after reporting validation. Changes follow every gate bel
 
    Exact catalog matches pass through. Likely matches require affirmative confirmation: display the exact candidate, ask once, and set `confirmed: true` only after an affirmative response. For `ambiguous`, show only returned exact candidates; after the user chooses, resolve that chosen exact string again so the stored outcome is `exact`. For `no_match`, show the full selectable list and stop pending an exact choice or cancel. `banned` stops. Ambiguous and `no_match` results stop before preview/write; `banned` does too.
 
-   For each tier, retain the full resolver result under `selection.resolution`, then offer an explicit or `auto` choice for reasoning and context as sibling fields. The canonical reasoning choices are `reasoning_effort: auto|low|medium|high|xhigh`; the canonical context choices are `context_tier: auto|default|long_context`. Near matches and different casing require confirmation rather than silent normalization. Thinking words in free-form model intent affect model matching only; they never choose a runtime setting.
+   For each tier, retain the full resolver result under `selection.resolution`, then offer an explicit or `auto` choice for reasoning and context as sibling fields. The accepted choices are per harness: `copilot-cli` reasoning `auto|low|medium|high|xhigh` and context `auto|default|long_context`; `codex-cli` and `codex-app` reasoning `auto|low|medium|high|xhigh|max|ultra` and context `auto` only; other harnesses `auto`/`auto` only. On either Codex surface, an explicit `reasoning_effort` must also be in the chosen model's `supported_reasoning_levels` (from `codex debug models`) — confirm this before proposing, since the harness will otherwise reject it at spawn. Near matches and different casing require confirmation rather than silent normalization. Thinking words in free-form model intent affect model matching only; they never choose a runtime setting.
 
    `auto` is a runtime-setting value only. It means omit that corresponding dispatch argument and let the active harness use its adaptive or default behavior. Reasoning and context omission are independent. Runtime `auto` is not Copilot model Auto and is not parent model inheritance.
 
-   Explicit runtime settings are supported only for `copilot-cli`. On `copilot-vscode` or an unknown harness, `auto`/`auto` remains allowed; if either setting is explicit, hard-stop before any probe, preview, or write. Do not create a proposal or claim partial support.
+   Explicit runtime settings are supported for `copilot-cli` (reasoning and context) and for `codex-cli` and `codex-app` (reasoning only; `context_tier` is `auto`-only, as the Codex spawn tool has no context parameter). On `copilot-vscode` or an unknown harness, `auto`/`auto` remains allowed; if a setting falls outside its harness's accepted vocabulary, hard-stop before any probe, preview, or write. Do not create a proposal or claim partial support.
 
    Resolve all five models to `exact` or confirmed `likely` before constructing session state. Only exact active-catalog strings enter `assignments`. Every new proposal must contain all five `dispatch_settings` entries, each with both canonical fields; only `build-profile` may construct that proposal.
 

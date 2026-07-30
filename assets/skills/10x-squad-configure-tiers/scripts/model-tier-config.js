@@ -20,9 +20,47 @@ const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'c
 const CONFIG_FIELDS = new Set(['schema_version', 'updated_at', 'harnesses']);
 const PROFILE_FIELDS = new Set(['assignments', 'dispatch_settings', 'model_checks']);
 const DISPATCH_SETTING_FIELDS = new Set(['reasoning_effort', 'context_tier']);
-const REASONING_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh']);
-const CONTEXT_TIERS = new Set(['auto', 'default', 'long_context']);
-const EXPLICIT_DISPATCH_HARNESSES = new Set(['copilot-cli']);
+
+// Per-harness runtime-setting vocabulary. A harness absent from this map allows
+// only `auto`/`auto` — the safe posture for a surface whose dispatch contract
+// has not been verified (this is how copilot-vscode behaves). Per-MODEL
+// reasoning-effort legality (e.g. gpt-5.5 rejecting `ultra`) is a live-catalog
+// fact, NOT encoded here: the dependency-free engine never hardcodes model
+// facts. That check lives in the configure-tiers skill against the acquired
+// catalog and is finally enforced by the harness at spawn time (fail-loud).
+// See docs/codex-harness-spike.md (C7/C9) and references/model-resolution.md.
+const HARNESS_DISPATCH_CAPABILITIES = {
+  'copilot-cli': {
+    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh']),
+    context_tier: new Set(['auto', 'default', 'long_context']),
+  },
+  'codex-cli': {
+    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+    context_tier: new Set(['auto']),
+  },
+  // Same vocabulary as codex-cli, established from codex-app's own evidence
+  // (Probe F) rather than copied: its spawn tool takes model + reasoning_effort
+  // and no context parameter, and its catalog reports the same effort levels.
+  // Separate key because the surfaces run different engine builds and their
+  // spawnable sets drift independently (docs/codex-harness-spike.md, Probe I1).
+  'codex-app': {
+    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+    context_tier: new Set(['auto']),
+  },
+};
+const DEFAULT_DISPATCH_CAPABILITY = {
+  reasoning_effort: new Set(['auto']),
+  context_tier: new Set(['auto']),
+};
+
+function dispatchCapability(harness) {
+  // Object.hasOwn, not a bare lookup: a harness literally named "__proto__" (or
+  // another inherited key) must fall through to the default, not resolve to
+  // Object.prototype.
+  return typeof harness === 'string' && Object.hasOwn(HARNESS_DISPATCH_CAPABILITIES, harness)
+    ? HARNESS_DISPATCH_CAPABILITIES[harness]
+    : DEFAULT_DISPATCH_CAPABILITY;
+}
 const CHECK_FIELDS = new Set(['display_name', 'status', 'method', 'source', 'checked_at']);
 const CHECK_STATUSES = new Set(['verified', 'unverified']);
 const CREDENTIAL_FIELD = /^(api[_-]?key|token|secret|password|passphrase|authorization|bearer|credentials?)$/i;
@@ -79,7 +117,8 @@ function validateDispatchSettings(dispatchSettings, { where = 'dispatch_settings
     return [`${where} must be an object with exactly the five canonical tier keys`];
   }
 
-  let hasExplicitSetting = false;
+  const cap = dispatchCapability(harness);
+  const forHarness = `for harness ${JSON.stringify(harness ?? 'unknown')}`;
   for (const tier of TIER_KEYS) {
     if (!Object.hasOwn(dispatchSettings, tier)) {
       errors.push(`${where}: missing canonical tier key ${JSON.stringify(tier)}`);
@@ -93,22 +132,15 @@ function validateDispatchSettings(dispatchSettings, { where = 'dispatch_settings
     for (const field of Object.keys(setting)) {
       if (!DISPATCH_SETTING_FIELDS.has(field)) errors.push(fieldError(`${where}.${tier}`, field));
     }
-    if (!Object.hasOwn(setting, 'reasoning_effort') || !REASONING_EFFORTS.has(setting.reasoning_effort)) {
-      errors.push(`${where}.${tier}.reasoning_effort must be one of ${[...REASONING_EFFORTS].join(', ')}`);
-    } else if (setting.reasoning_effort !== 'auto') {
-      hasExplicitSetting = true;
+    if (!Object.hasOwn(setting, 'reasoning_effort') || !cap.reasoning_effort.has(setting.reasoning_effort)) {
+      errors.push(`${where}.${tier}.reasoning_effort must be one of ${[...cap.reasoning_effort].join(', ')} ${forHarness}`);
     }
-    if (!Object.hasOwn(setting, 'context_tier') || !CONTEXT_TIERS.has(setting.context_tier)) {
-      errors.push(`${where}.${tier}.context_tier must be one of ${[...CONTEXT_TIERS].join(', ')}`);
-    } else if (setting.context_tier !== 'auto') {
-      hasExplicitSetting = true;
+    if (!Object.hasOwn(setting, 'context_tier') || !cap.context_tier.has(setting.context_tier)) {
+      errors.push(`${where}.${tier}.context_tier must be one of ${[...cap.context_tier].join(', ')} ${forHarness}`);
     }
   }
   for (const key of Object.keys(dispatchSettings)) {
     if (!TIER_KEYS.includes(key)) errors.push(fieldError(where, key));
-  }
-  if (hasExplicitSetting && !EXPLICIT_DISPATCH_HARNESSES.has(harness)) {
-    errors.push(`${where}: harness ${JSON.stringify(harness ?? 'unknown')} does not support explicit runtime settings`);
   }
   return errors;
 }

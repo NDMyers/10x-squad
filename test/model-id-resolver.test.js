@@ -493,7 +493,7 @@ test('verification plan rejects explicit settings for unsupported harnesses', ()
           selections,
         }),
         new RegExp(
-          `harness ${JSON.stringify(harness)} does not support explicit runtime settings`
+          `must be one of auto for harness ${JSON.stringify(harness)}`
         )
       );
     }
@@ -525,6 +525,72 @@ test('copilot-cli allows explicit reasoning and context settings', () => {
   assert.deepEqual(plan.verification_targets, [
     expectedTarget(model, 'xhigh', 'default'),
   ]);
+});
+
+test('codex-cli allows max and ultra reasoning efforts', () => {
+  const model = 'gpt-5.6-sol';
+  for (const effort of ['max', 'ultra']) {
+    const plan = verificationPlan({
+      harness: 'codex-cli',
+      catalog: catalog([model], 'codex-cli'),
+      selections: fiveSelections(model, effort, 'auto'),
+    });
+    assert.deepEqual(plan.verification_targets, [expectedTarget(model, effort, 'auto')]);
+  }
+});
+
+test('codex-cli rejects any explicit context_tier (auto only)', () => {
+  const model = 'gpt-5.6-sol';
+  for (const contextTier of ['default', 'long_context']) {
+    const selections = fiveSelections(model);
+    selections.complex = exactSelection(model, 'auto', contextTier);
+    assert.throws(
+      () => verificationPlan({
+        harness: 'codex-cli',
+        catalog: catalog([model], 'codex-cli'),
+        selections,
+      }),
+      /context_tier must be one of auto for harness "codex-cli"/
+    );
+  }
+});
+
+test('codex-app carries its own capability entry, not codex-cli\'s by inheritance', () => {
+  const model = 'gpt-5.6-sol';
+  for (const effort of ['max', 'ultra']) {
+    const plan = verificationPlan({
+      harness: 'codex-app',
+      catalog: catalog([model], 'codex-app'),
+      selections: fiveSelections(model, effort, 'auto'),
+    });
+    assert.deepEqual(plan.verification_targets, [expectedTarget(model, effort, 'auto')]);
+  }
+
+  // The Codex spawn tool takes no context parameter on either surface.
+  const selections = fiveSelections(model);
+  selections.complex = exactSelection(model, 'auto', 'long_context');
+  assert.throws(
+    () => verificationPlan({
+      harness: 'codex-app',
+      catalog: catalog([model], 'codex-app'),
+      selections,
+    }),
+    /context_tier must be one of auto for harness "codex-app"/
+  );
+});
+
+test('copilot-cli rejects the Codex-only ultra effort', () => {
+  const model = 'gpt-5.4';
+  const selections = fiveSelections(model);
+  selections.complex = exactSelection(model, 'ultra', 'auto');
+  assert.throws(
+    () => verificationPlan({
+      harness: 'copilot-cli',
+      catalog: catalog([model], 'copilot-cli'),
+      selections,
+    }),
+    /reasoning_effort must be one of auto, low, medium, high, xhigh for harness "copilot-cli"/
+  );
 });
 
 test('verification targets deduplicate full tuples but keep settings variants', () => {
@@ -638,7 +704,7 @@ test('profile builder rejects unsupported explicit settings before reading probe
 
     assert.throws(
       () => buildResolvedProfile(request),
-      /does not support explicit runtime settings/
+      /must be one of auto for harness/
     );
   }
 });
@@ -1066,7 +1132,7 @@ test('CLI verification-targets rejects unsupported explicit settings without out
 
     assert.equal(result.status, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /does not support explicit runtime settings/u);
+    assert.match(result.stderr, /must be one of auto for harness/u);
     assert.equal(result.stderr.trim().split('\n').length, 1);
   }
 });

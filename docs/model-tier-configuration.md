@@ -8,7 +8,7 @@ Run `/10x-squad-configure-tiers` (or ask to view/change squad model assignments)
 
 - shows the current effective five-row mapping of model + reasoning + context and its source scope;
 - offers **default-all** (one three-part profile expanded into all five explicit entries) or **individual** per-tier profiles;
-- offers explicit or `auto` choices for both runtime settings: reasoning `auto|low|medium|high|xhigh` and context `auto|default|long_context`;
+- offers explicit or `auto` choices for both runtime settings, per the active harness's vocabulary (see the per-surface table below);
 - previews the stored-file diff and resulting effective mapping before writing;
 - validates and writes atomically via the bundled engine — never hand-edit `model-routing.json`.
 
@@ -28,12 +28,32 @@ The workspace path is the live-proven configuration path. Global-file resolution
 
 Each harness has its own profile and identifier namespace — never reuse identifiers across surfaces.
 
-| Surface | Key | Status (2026-07-13) | Identifier form |
+| Surface | Key | Status | Identifier form |
 |---|---|---|---|
 | Copilot CLI | `copilot-cli` | **Supported — actuator proven** (see `model-routing-harness-spike.md`) | exact slugs returned by the CLI |
 | VS Code Copilot | `copilot-vscode` | **Catalog discovery and exact-label addressability proven; verified exact-routing gate not passed** — addressability-only probes stay unverified | picker display strings |
+| Codex CLI | `codex-cli` | **Supported at the unverified tier** — per-dispatch model + reasoning proven, but executed-model identity is not observable, so probes stay `unverified` (see `codex-harness-spike.md`) | spawnable model slugs |
+| ChatGPT desktop app | `codex-app` | **Supported at the unverified tier** — spawn, per-dispatch model + reasoning, fail-loud, and unattended resolver all proven on this surface (Probe F); executed-model identity is not observable here either | spawnable model slugs, acquired on this surface |
 
-Only `copilot-cli` supports explicit reasoning and context dispatch settings. `copilot-vscode` and unknown harnesses allow `auto`/`auto` only; if either setting is explicit, the configuration flow hard-stops before any probe, preview, or write.
+The two Codex surfaces are deliberately kept separate. They run different engine builds
+(`0.145.0` vs `0.146.0-alpha.3.1` on the reference machine), and their spawnable model sets drift
+independently over time — one surface's set changed from two entries to five in four days — so a
+profile configured for one is not valid for the other. Vivaldi detects the active surface at runtime
+from `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, corroborated by `/Applications/ChatGPT.app/` on `PATH`;
+the `codex` binary path and `codex --version` do **not** discriminate.
+
+Explicit dispatch settings by surface: `copilot-cli` accepts both settings; `codex-cli` and
+`codex-app` accept explicit `reasoning_effort` but only `auto` `context_tier` (the Codex spawn tool
+has no context parameter); `copilot-vscode` and unknown harnesses allow `auto`/`auto` only. A setting
+outside its surface's vocabulary hard-stops before any probe, preview, or write. Accepted
+vocabularies:
+
+| Surface | `reasoning_effort` | `context_tier` |
+|---|---|---|
+| `copilot-cli` | `auto\|low\|medium\|high\|xhigh` | `auto\|default\|long_context` |
+| `codex-cli` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
+| `codex-app` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
+| `copilot-vscode`, unknown | `auto` only | `auto` only |
 
 Example values in docs are illustrative shapes, never defaults or a selectable list. Catalog/doc presence ≠ availability: entitlement, authentication, and the active session filter the real list. On the CLI, the authoritative list comes from the harness itself (e.g., a failed dispatch error enumerates entitled models; `/subagents` shows per-agent choices). On VS Code, a live invalid `runSubagent` call rejected the identifier before child launch and returned that active session's selectable labels. A later exact picker-label no-op returned `MODEL_ROUTE_OK`, proving that label was addressable in the tested session.
 
@@ -46,6 +66,16 @@ For VS Code, a successful exact-model no-op proves that the label is addressable
 - **Keep `continueOnAutoMode` false** (its default). When true, rate-limit errors silently switch the session to Auto and retry — exactly the substitution the squad forbids.
 - **Allow the resolver unattended:** the session needs `--allow-tool "shell(node:*)"` (or equivalent config) so Vivaldi can run the resolver before each dispatch without approval prompts. A declined resolver invocation hard-stops the pipeline.
 - Server-side experiments steer *default* subagent models on Copilot accounts; the squad's explicit per-dispatch `model` argument overrides them — one more reason never to rely on model defaults. Runtime settings marked `auto` are intentionally omitted.
+
+## Operational preconditions (Codex CLI / ChatGPT app)
+
+- **Vivaldi runs at the root session.** Codex has no flag to boot the primary session as a custom agent, so Vivaldi is the `$10x-squad-vivaldi` skill invoked at the root; personas spawn at depth 1 from there (`max_depth` defaults to 1, so a spawned Vivaldi could not spawn personas). If the session did not open with Vivaldi's introduction, the skill did not load — restart.
+- **Enable `multi_agent_v2`.** The per-dispatch `model` / `reasoning_effort` actuator lives behind this feature flag, and it ships disabled. Start with `codex --enable multi_agent_v2` (or enable it in config). If `spawn_agent` is missing or lacks both parameters, the pipeline hard-blocks before the first dispatch.
+- **`context_tier` is always `auto`.** Codex `spawn_agent` has no context parameter; the resolver resolves `context_tier` to `auto` and it is never passed.
+- **Executed-model identity is not observable.** `spawn_agent`/`wait_agent`/`list_agents` and the event stream carry no model field, so Codex profiles record `unverified` / `addressability_probe`. The backstop is fail-loud: an invalid model or unsupported reasoning effort is rejected before child launch with the accepted set enumerated. That rejection is the authoritative availability source.
+- **The spawn model set is narrower than the parent set.** `codex debug models` lists parent-selectable models; `spawn_agent` accepts a smaller subset. Assignments must be spawnable models, taken from the spawn-time `Available models:` enumeration, not from `codex debug models` alone.
+- **Reasoning effort is validated per model.** `max`/`ultra` exist only on models that list them (`codex debug models` → `supported_reasoning_levels`). The configure skill checks the chosen effort against the chosen model before writing; the harness enforces it again at spawn.
+- **Vivaldi is invoked by name.** Its `agents/openai.yaml` sets `allow_implicit_invocation: false`, so a 25KB orchestrator never fires on an unrelated request — and it does not appear in the ambient skill list. Invoke `$10x-squad-vivaldi` explicitly.
 
 ## Free-text and local/BYOK
 

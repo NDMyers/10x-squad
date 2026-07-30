@@ -206,6 +206,44 @@ test('only copilot-cli supports explicit dispatch settings', () => {
   assert.equal(validateProfile(automatic, { harness: 'unknown-surface' }).ok, true);
 });
 
+test('codex-app is its own harness key with the same Codex vocabulary', () => {
+  // Separate key by design: the surfaces run different engine builds and their
+  // spawnable sets drift independently (spike Probe F0b/I1), so a profile stored
+  // for one must never resolve for the other.
+  for (const effort of ['max', 'ultra']) {
+    const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings(effort, 'auto') });
+    assert.equal(validateProfile(p, { harness: 'codex-app' }).ok, true, effort);
+  }
+
+  for (const contextTier of ['default', 'long_context']) {
+    const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings('high', contextTier) });
+    const result = validateProfile(p, { harness: 'codex-app' });
+    assert.equal(result.ok, false, contextTier);
+    assert.match(result.errors.join('; '), /context_tier must be one of auto for harness "codex-app"/);
+  }
+});
+
+test('codex-cli accepts max/ultra reasoning but only auto context_tier', () => {
+  for (const effort of ['max', 'ultra']) {
+    const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings(effort, 'auto') });
+    assert.equal(validateProfile(p, { harness: 'codex-cli' }).ok, true, effort);
+  }
+
+  // context_tier has no Codex analog — only auto is legal (spike C7).
+  for (const contextTier of ['default', 'long_context']) {
+    const p = mkProfile('gpt-5.6-sol', { dispatch_settings: mkDispatchSettings('high', contextTier) });
+    const result = validateProfile(p, { harness: 'codex-cli' });
+    assert.equal(result.ok, false, contextTier);
+    assert.match(result.errors.join('; '), /context_tier must be one of auto for harness "codex-cli"/);
+  }
+
+  // max/ultra are Codex-only and must not leak into the Copilot vocabulary.
+  for (const effort of ['max', 'ultra']) {
+    const p = mkProfile('gpt-5.4', { dispatch_settings: mkDispatchSettings(effort, 'auto') });
+    assert.equal(validateProfile(p, { harness: 'copilot-cli' }).ok, false, effort);
+  }
+});
+
 test('schema v1 rejects dispatch settings while schema v2 permits legacy profiles without them', () => {
   const v1 = mkConfig({ 'copilot-cli': 'm' });
   v1.harnesses['copilot-cli'].dispatch_settings = mkDispatchSettings();

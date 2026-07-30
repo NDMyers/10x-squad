@@ -241,9 +241,12 @@ test('explicit runtime settings are capability-gated before any side effect', ()
     readText(OPERATOR_GUIDE),
   ].join('\n');
 
-  assert.match(contract, /only `?copilot-cli`?.*(?:allows|supports|may persist) explicit/is);
-  assert.match(contract, /`?copilot-vscode`?.*(?:unknown harness|unknown surface).*explicit/is);
-  assert.match(contract, /(?:either|any) setting.*explicit.*stop before.*probe.*preview.*write/is);
+  // copilot-cli and codex-cli are the surfaces that persist explicit settings;
+  // codex-cli's context_tier is auto-only (no Codex context parameter).
+  assert.match(contract, /`?copilot-cli`?.*(?:allows|supports|accepts).*explicit/is);
+  assert.match(contract, /`?codex-cli`?.*(?:reasoning|context).*(?:auto|explicit)/is);
+  assert.match(contract, /`?copilot-vscode`?.*(?:unknown harness|unknown surface).*(?:explicit|auto)/is);
+  assert.match(contract, /(?:either|any|a) setting.*(?:explicit|vocabulary).*(?:stop|hard-stop).*(?:probe|preview|write)/is);
   assert.match(contract, /`?auto`?\s*\/\s*`?auto`?.*(?:remains|is) allowed/is);
 });
 
@@ -570,15 +573,39 @@ test('public docs promise live catalog discovery and named context tiers, not ha
   assert.doesNotMatch(contract, /\b\d+(?:,\d{3})*\s*(?:tokens?|k[- ]?tokens?)\b/i);
 });
 
-test('model resolution defines explicit catalog adapters for both active harnesses', () => {
+test('model resolution defines explicit catalog adapters for every active harness', () => {
   const reference = readModelResolution();
   assert.deepEqual(
     [
       reference.includes('## copilot-vscode adapter'),
       reference.includes('## copilot-cli adapter'),
+      reference.includes('## codex-cli adapter'),
+      reference.includes('## codex-app adapter'),
     ],
-    [true, true]
+    [true, true, true, true]
   );
+});
+
+test('the codex-app adapter forbids inheriting codex-cli catalog data', () => {
+  const adapter = referenceSection('codex-app adapter');
+  // The surfaces are separate because their spawnable sets drift independently
+  // (spike Probe I1) — not because one was ever measured as larger.
+  assert.match(adapter, /separate surface/i);
+  assert.match(adapter, /Available models/);
+  assert.match(adapter, /Re-acquire rather than cache/i);
+  assert.match(adapter, /never\s+copy a `codex-cli` profile across/i);
+});
+
+test('the codex-cli adapter distinguishes the parent catalog from the spawn catalog', () => {
+  const adapter = referenceSection('codex-cli adapter');
+  assert.match(adapter, /codex debug models/i);
+  // The load-bearing spike finding: listed parent models are not all spawnable.
+  assert.match(adapter, /parent catalog is not the spawn catalog/i);
+  assert.match(adapter, /spawn_agent/);
+  assert.match(adapter, /Available models/);
+  assert.match(adapter, /No feature flag is required/i);
+  assert.match(adapter, /only the exact returned slugs/i);
+  assert.match(adapter, /no hardcoded fallback|STOP/i);
 });
 
 test('the copilot-cli adapter fails before child launch to acquire only live exact labels', () => {
