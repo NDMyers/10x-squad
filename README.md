@@ -1,55 +1,170 @@
 # 10x-squad
 
+Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator) plus seven
+skills: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and
+`10x-squad-configure-tiers` (work-tier model, reasoning, and context routing).
 
-Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator) plus seven skills: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and `10x-squad-configure-tiers` (work-tier model, reasoning, and context routing). Ships to **GitHub Copilot** and **Codex CLI / ChatGPT app**.
+Ships to **GitHub Copilot** and **Codex** (Codex CLI and the ChatGPT desktop app).
+
+Requires Node.js ≥ 20. No runtime dependencies.
+
+---
+
+## Install
 
 ```
-assets/vivaldi/                      Vivaldi's single source: core.md (harness-agnostic body)
-                                     + dispatch-<harness>.md + frontmatter-<harness>.yml
-assets/skills/10x-*/                 seven skills, installed as complete packages
-                                     (SKILL.md + nested scripts/, references/, agents/)
-lib/compose.js                       renders each harness entrypoint from assets/vivaldi/
-lib/installer.js                     per-harness asset manifest + recursive copy logic
-bin/10x-squad.js                     CLI: 10x-squad install [-d <dir>] [--harness <name>]
-test/                                node --test suites (npm test runs full discovery)
-evals/                               deployment parity check + headless eval harness
-docs/review/                         squad review, architecture, eval plan, learning notes
-```
-
-## Quickstart
-
-Clone repository then inside run:
-```
+git clone <this repo> && cd 10x-squad
 node bin/10x-squad.js install --directory <workspace-root>
 ```
-(re-running is idempotent; unrelated `.github` / `.agents` customizations are preserved).
 
-`--harness copilot|codex|all` selects targets; the default is `all`.
+```
+Usage: 10x-squad install [options]
 
-| Harness | Entrypoint | Installed to |
+  -d, --directory <path>   Target project directory (default: cwd)
+  --harness <name>         copilot | codex | all (default: all)
+  -h, --help               Show help
+  -v, --version            Show version
+```
+
+Re-running is idempotent, and unrelated `.github/` / `.agents/` customizations in the target
+workspace are preserved — the installer only writes the files it owns. It **never** touches model
+routing config (see [Model routing](#model-routing)).
+
+### What each harness installs
+
+`--harness` here selects **install targets** — which files land where. It is a different axis from
+the routing surface key described under [Model routing](#model-routing); don't confuse the two.
+
+| `--harness` | Entrypoint | Files written |
 |---|---|---|
-| `copilot` | `10x-squad` custom agent | `.github/agents/`, `.github/skills/` |
-| `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/` |
+| `copilot` | `10x-squad` custom agent | `.github/agents/10x-squad.agent.md`<br>`.github/skills/10x-*/` |
+| `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/10x-squad-vivaldi/SKILL.md`<br>`.agents/skills/10x-squad-vivaldi/agents/openai.yaml`<br>`.agents/skills/10x-*/` |
+| `all` *(default)* | both | both trees |
 
-**Codex operating notes.** One Codex install serves **two surfaces** — the Codex CLI (`codex-cli`)
-and the ChatGPT desktop app (`codex-app`, launched with `codex app <path>`). Both are supported;
-each keeps its own routing profile, because they run different engine builds and their spawnable
-model sets drift independently. Vivaldi detects which one it is on at runtime.
+Each skill installs as a complete package — `SKILL.md` plus its nested `scripts/`, `references/`,
+and `agents/` directories. Vivaldi is not copied but *composed* per harness from `assets/vivaldi/`,
+so both entrypoints stay derived from one body.
 
-Codex has no flag to boot the primary session as a custom agent, so Vivaldi is a skill invoked at the
-**root** session (`$10x-squad-vivaldi`) — persona subagents spawn at depth 1 from there. No feature
-flag is needed: the per-dispatch `model` / `reasoning_effort` actuator is available by default on
-both surfaces. Vivaldi sets `allow_implicit_invocation: false`, so it never fires on an unrelated
-request and does not appear in the ambient skill list — invoke it by name. Evidence and surface
-limits: `docs/codex-harness-spike.md`.
+### Verify the install
+
+```
+ls <workspace-root>/.github/agents/10x-squad.agent.md          # copilot
+ls <workspace-root>/.agents/skills/10x-squad-vivaldi/SKILL.md  # codex
+```
+
+Then open the workspace in the harness and invoke the orchestrator — `@10x-squad` on Copilot,
+`$10x-squad-vivaldi` on Codex. It introduces itself before doing anything; if it doesn't, the skill
+didn't load.
+
+---
+
+## Harness notes
+
+### GitHub Copilot
+
+Vivaldi installs as a first-class custom agent, so it can be selected as the primary agent for a
+session. Personas dispatch as subagents.
+
+Explicit reasoning and context values are supported on **Copilot CLI** today. **VS Code** — and any
+harness the resolver doesn't recognize — accepts `auto`/`auto` only.
+
+### Codex
+
+One Codex install serves **two surfaces**: the Codex CLI (`codex-cli`) and the ChatGPT desktop app
+(`codex-app`, launched with `codex app <path>`). Both are supported. Each keeps its **own** routing
+profile, because the surfaces run different engine builds and their spawnable model sets drift
+independently. Vivaldi detects which surface it is on at runtime and resolves the matching profile;
+if that profile is missing it stops rather than borrowing the other surface's.
+
+Codex has no flag to boot the primary session as a custom agent, so Vivaldi ships as a skill invoked
+at the **root** session (`$10x-squad-vivaldi`); persona subagents spawn at depth 1 from there.
+
+No feature flag is needed — the per-dispatch `model` / `reasoning_effort` actuator is available by
+default on both surfaces. Vivaldi sets `allow_implicit_invocation: false`, so it never fires on an
+unrelated request and does not appear in the ambient skill list; invoke it by name.
+
+Evidence, probe records, and known surface limits: [`docs/codex-harness-spike.md`](docs/codex-harness-spike.md).
+
+---
 
 ## Model routing
 
-Each work-tier profile combines one exact model, one reasoning choice, and one context choice. `/10x-squad-configure-tiers` writes `<workspace>/.10x-squad/model-routing.json` (workspace) or `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (global), and Vivaldi resolves that profile for every persona dispatch through the installed resolver script. Runtime `auto` omits only its corresponding dispatch argument; it is not Copilot model Auto or parent inheritance. Explicit reasoning/context values are supported only by Copilot CLI today; VS Code and unknown harnesses allow `auto`/`auto` only. **Reinstalling never touches these config files.** Operator guide and learning summary: `docs/model-tier-configuration.md`; harness evidence: `docs/model-routing-harness-spike.md`.
+Each of the five work tiers gets a profile combining one exact model, one reasoning choice, and one
+context choice. Vivaldi resolves that profile for every persona dispatch through the installed
+resolver script, and announces what it picked.
+
+Run **`/10x-squad-configure-tiers`** inside the harness to write a profile. It stores to:
+
+| Scope | Path |
+|---|---|
+| workspace | `<workspace>/.10x-squad/model-routing.json` |
+| global | `$XDG_CONFIG_HOME/10x-squad/model-routing.json` |
+
+**Reinstalling never touches these files.**
+
+Profiles are keyed by **routing surface** — a finer-grained identifier than the installer's
+`--harness`, because dispatch capability differs across surfaces of the same product:
+
+| Surface key | Reasoning effort | Context tier |
+|---|---|---|
+| `copilot-cli` | `auto` `low` `medium` `high` `xhigh` | `auto` `default` `long_context` |
+| `codex-cli` | `auto` `low` `medium` `high` `xhigh` `max` `ultra` | `auto` |
+| `codex-app` | `auto` `low` `medium` `high` `xhigh` `max` `ultra` | `auto` |
+| anything else (incl. `copilot-vscode`) | `auto` | `auto` |
+
+Configure each surface you actually use. A missing profile is a hard stop, not a fallback.
+
+Two rules worth knowing before you configure:
+
+- **`auto` is not inheritance.** A runtime `auto` omits only its corresponding dispatch argument. It
+  is not Copilot model Auto, and it is not "inherit from the parent".
+- **Model identifiers must be exact and current.** Spawnable model sets drift; the skill re-acquires
+  the live catalog rather than trusting a cached list, and rejects `auto`/`inherit` as assignments.
+
+Operator guide: [`docs/model-tier-configuration.md`](docs/model-tier-configuration.md) ·
+harness evidence: [`docs/model-routing-harness-spike.md`](docs/model-routing-harness-spike.md).
+
+---
+
+## Repository layout
+
+```
+assets/vivaldi/         Vivaldi's single source: core.md (harness-agnostic body)
+                        + dispatch-<harness>.md + frontmatter-<harness>.yml
+assets/skills/10x-*/    seven skills, installed as complete packages
+lib/compose.js          renders each harness entrypoint from assets/vivaldi/
+lib/installer.js        per-harness asset manifest + recursive copy logic
+bin/10x-squad.js        CLI: 10x-squad install [-d <dir>] [--harness <name>]
+test/                   node --test suites (npm test runs full discovery)
+evals/                  deployment parity check + headless eval harness
+docs/                   harness spikes, model-tier operator guide
+docs/review/            squad review, architecture, eval plan, learning notes
+```
+
+## Development
+
+```
+npm test                                  # full suite
+W=/tmp/sync && rm -rf $W && mkdir -p $W
+node bin/10x-squad.js install -d $W
+SQUAD_ROOT=$W bash evals/check-sync.sh    # SOURCE failures must be 0
+```
+
+`check-sync.sh` recomposes Vivaldi and compares it against the deployed copy. Its exit code is the
+total failure count, split into three categories with different owners: **SOURCE** (the invariant
+below — must always be 0), **UPSTREAM** (corpay-agents copies lagging), and **PORT** (Claude Code
+command stubs).
 
 ## The source-of-truth rule
 
-**This repo's `assets/` is the only place squad prompts are edited.** Deployed copies (`<workspace>/.github/agents|skills/`, `<workspace>/.agents/skills/`, corpay-agents) are build outputs — never edit them in place. Vivaldi is doubly a build output: both harness entrypoints are *composed* from `assets/vivaldi/`, so there is no checked-in copy of the assembled file to edit by mistake. `evals/check-sync.sh` recomposes and compares.
+**This repo's `assets/` is the only place squad prompts are edited.** Deployed copies
+(`<workspace>/.github/agents|skills/`, `<workspace>/.agents/skills/`, corpay-agents) are build
+outputs — never edit them in place. Vivaldi is doubly a build output: both harness entrypoints are
+*composed* from `assets/vivaldi/`, so there is no checked-in copy of the assembled file to edit by
+mistake.
 
-History: until 2026-07-12 it was the other way around — the live `.github/` copy evolved (Sentinel, traceability gates, Jun 1) while `assets/` sat at May 8, so running the installer would have *rolled back* the best lineage and omitted Sentinel (absent from the manifest). That lineage was adopted back into `assets/` and the manifest fixed; this repo was git-initialized the same day so `.bak` files are retired as a versioning mechanism.
-
+History: until 2026-07-12 it was the other way around — the live `.github/` copy evolved (Sentinel,
+traceability gates, Jun 1) while `assets/` sat at May 8, so running the installer would have *rolled
+back* the best lineage and omitted Sentinel (absent from the manifest). That lineage was adopted back
+into `assets/` and the manifest fixed; this repo was git-initialized the same day, so `.bak` files
+are retired as a versioning mechanism.
