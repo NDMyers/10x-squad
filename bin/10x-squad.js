@@ -3,13 +3,15 @@
 'use strict';
 
 const packageJson = require('../package.json');
-const { SKILL_DISCOVERY_ROOTS, installTenXSquad } = require('../lib/installer');
+const { SKILL_DISCOVERY_ROOTS, installTenXSquad, uninstallTenXSquad } = require('../lib/installer');
 
 function printHelp() {
   console.log(`Usage: 10x-squad <command> [options]
 
 Commands:
   install                 Install 10x Squad workspace customization assets
+  uninstall               Remove the assets install writes, leaving
+                          .10x-squad/model-routing.json untouched
 
 Options:
   -d, --directory <path>  Target project directory
@@ -93,7 +95,7 @@ function main(argv) {
     return 0;
   }
 
-  if (command !== 'install') {
+  if (command !== 'install' && command !== 'uninstall') {
     console.error(`Unknown command: ${command}`);
     printHelp();
     return 1;
@@ -106,12 +108,20 @@ function main(argv) {
       return 0;
     }
 
+    if (command === 'uninstall') {
+      const result = uninstallTenXSquad({ directory: options.directory, harness: options.harness });
+      console.log(
+        `Removed ${result.removed.length} 10x Squad asset(s) (${result.harnesses.join(', ')}) from ${result.targetDirectory}`
+      );
+      return 0;
+    }
+
     const result = installTenXSquad({ directory: options.directory, harness: options.harness });
     console.log(`Installed 10x Squad assets (${result.harnesses.join(', ')}) into ${result.targetDirectory}`);
     printShadowWarning(result.shadowed);
     return 0;
   } catch (err) {
-    console.error(`10x-squad install failed: ${err.message}`);
+    console.error(`10x-squad ${command} failed: ${err.message}`);
     return 1;
   }
 }
