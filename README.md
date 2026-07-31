@@ -89,9 +89,31 @@ Evidence, probe records, and known surface limits: [`docs/codex-harness-spike.md
 
 ## Model routing
 
-Each of the five work tiers gets a profile combining one exact model, one reasoning choice, and one
-context choice. Vivaldi resolves that profile for every persona dispatch through the installed
-resolver script, and announces what it picked.
+Routing is a **(persona, work tier)** coordinate: six dispatchable personas × five work tiers, so 30
+cells, each a profile combining one exact model, one reasoning choice, and one context choice.
+Vivaldi resolves **each persona's own** profile on every dispatch through the installed resolver
+script, and announces what it picked.
+
+That split matters because tier alone conflates two things: how hard the task is, and how much
+reasoning the role needs. On a Complex task, Einstein and Cobalt — who draft the plan and gate the
+work — earn a frontier model at high effort. Linus, working from a good spec and a good review, does
+not.
+
+Thirty questions would be a miserable setup, so the configure skill offers four entry paths that all
+write the same fully explicit matrix:
+
+| Path | Answers | What you pick |
+|---|---|---|
+| **Role lanes** *(recommended)* | 3 | one model + a tier-stepped effort curve per lane — Thinker (`einstein`, `peter`), Builder (`linus`, `ralph`), Reviewer (`cobalt`, `sentinel`) |
+| Default-all | 1 | one profile for every persona and tier |
+| Per work tier | 5 | one profile per tier, broadcast across personas |
+| Full matrix | 30 | every cell individually |
+
+No lane, role, or inheritance marker is ever stored — the paths differ only in how much they ask.
+
+**Vivaldi gets an advisory row, not an assignment.** It always runs as the root session and cannot
+select its own model, so the squad can record and announce a recommended parent model per tier, warn
+if the running session differs, and nothing more. It never blocks, and leaving it unset is fine.
 
 Run **`/10x-squad-configure-tiers`** inside the harness to write a profile. It stores to:
 
@@ -120,6 +142,11 @@ Two rules worth knowing before you configure:
   is not Copilot model Auto, and it is not "inherit from the parent".
 - **Model identifiers must be exact and current.** Spawnable model sets drift; the skill re-acquires
   the live catalog rather than trusting a cached list, and rejects `auto`/`inherit` as assignments.
+- **Personas are still model-agnostic.** The persona is a coordinate Vivaldi passes to the resolver,
+  never metadata inside a persona skill. No persona file pins a model.
+- **Existing configs keep working.** A stored schema-v1 or v2 profile applies its single tier row to
+  every persona, exactly as it always routed. The next successful write upgrades the file to schema
+  v3; nothing forces you to reconfigure.
 
 Operator guide: [`docs/model-tier-configuration.md`](docs/model-tier-configuration.md) ·
 harness evidence: [`docs/model-routing-harness-spike.md`](docs/model-routing-harness-spike.md).

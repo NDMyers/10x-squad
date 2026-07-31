@@ -34,6 +34,18 @@ function walkFiles(dir) {
 }
 
 const { composeVivaldi } = require('../lib/compose');
+const { detectShadowedSkills, installTenXSquad } = require('../lib/installer');
+
+// Same CLI-style args as runCli, but returns the structured install result so
+// the shadow report can be asserted directly rather than scraped from stderr.
+function runInstall(args, workspace) {
+  const harnessIndex = args.indexOf('--harness');
+  return installTenXSquad({
+    directory: workspace,
+    cwd: workspace,
+    harness: harnessIndex === -1 ? undefined : args[harnessIndex + 1],
+  });
+}
 
 function skillAssets(skillsRoot) {
   return skillNames.flatMap((skillName) => {
@@ -175,6 +187,7 @@ test('configure-tiers skill installs as a complete package with nested resources
     'SKILL.md',
     path.join('scripts', 'model-tier-config.js'),
     path.join('scripts', 'model-id-resolver.js'),
+    path.join('scripts', 'routing-constants.js'),
     path.join('references', 'config-format.md'),
     path.join('references', 'model-resolution.md'),
     path.join('agents', 'openai.yaml'),
@@ -231,6 +244,108 @@ test('reinstall preserves .10x-squad/model-routing.json and stays idempotent', (
   runCli(['install'], workspace);
   assert.equal(fs.readFileSync(configFile, 'utf8'), '{"sentinel":"preserve-me"}\n');
   assertInstalledAssets(workspace);
+});
+
+// Copilot loads .github/skills, .agents/skills and .claude/skills all at once, so
+// the same skill name under two roots is loaded twice and one copy shadows the
+// other. A full install keeps them identical; these cover the drift cases.
+const skillRoots = {
+  copilot: path.join('.github', 'skills'),
+  codex: path.join('.agents', 'skills'),
+};
+
+function staleCopy(workspace, root, skillName = '10x-squad-configure-tiers') {
+  const target = path.join(workspace, root, skillName, 'SKILL.md');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, '# stale build\n');
+}
+
+test('a full install leaves both harness trees identical and reports no shadowing', () => {
+  const workspace = makeTempDir();
+
+  const result = runInstall(['install'], workspace);
+
+  assert.deepEqual(result.shadowed, []);
+});
+
+test('a single-harness install reports the other root left behind at an older revision', () => {
+  const workspace = makeTempDir();
+  staleCopy(workspace, skillRoots.codex);
+
+  const result = runInstall(['install', '--harness', 'copilot'], workspace);
+
+  assert.equal(result.shadowed.length, 1);
+  const [shadow] = result.shadowed;
+  assert.equal(shadow.skillName, '10x-squad-configure-tiers');
+  assert.deepEqual(shadow.staleRoots, [skillRoots.codex]);
+  assert.deepEqual(
+    shadow.copies.map((copy) => [copy.root, copy.current]),
+    [[skillRoots.copilot, true], [skillRoots.codex, false]]
+  );
+});
+
+test('reinstalling every harness clears a previously shadowed skill', () => {
+  const workspace = makeTempDir();
+  staleCopy(workspace, skillRoots.codex);
+
+  assert.equal(runInstall(['install', '--harness', 'copilot'], workspace).shadowed.length, 1);
+  assert.deepEqual(runInstall(['install'], workspace).shadowed, []);
+});
+
+test('a stale copy in .claude/skills shadows even though the installer never writes there', () => {
+  const workspace = makeTempDir();
+  staleCopy(workspace, path.join('.claude', 'skills'));
+
+  const result = runInstall(['install'], workspace);
+
+  assert.equal(result.shadowed.length, 1);
+  assert.deepEqual(result.shadowed[0].staleRoots, [path.join('.claude', 'skills')]);
+});
+
+test('one stale copy alone is not reported — it shadows nothing', () => {
+  const workspace = makeTempDir();
+  staleCopy(workspace, skillRoots.codex);
+
+  // No install: the Codex tree is the only copy present, so nothing is hidden.
+  assert.deepEqual(detectShadowedSkills(workspace), []);
+});
+
+test('a missing file makes a copy stale, not merely edited bytes', () => {
+  const workspace = makeTempDir();
+  runInstall(['install'], workspace);
+  fs.rmSync(path.join(workspace, skillRoots.codex, '10x-squad-configure-tiers', 'scripts', 'routing-constants.js'));
+
+  const shadowed = detectShadowedSkills(workspace);
+
+  assert.equal(shadowed.length, 1);
+  assert.deepEqual(shadowed[0].staleRoots, [skillRoots.codex]);
+});
+
+test('the install command warns on stderr and still exits 0', () => {
+  const workspace = makeTempDir();
+  staleCopy(workspace, skillRoots.codex);
+
+  const result = spawnSync(process.execPath, [cliPath, 'install', '--harness', 'copilot'], {
+    cwd: workspace,
+    encoding: 'utf8',
+  });
+
+  // Shadowing is a warning, never a failure: the requested install did succeed.
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /multiple discovery roots at different revisions/);
+  assert.match(result.stderr, /10x-squad-configure-tiers/);
+  assert.match(result.stderr, /\(STALE\)/);
+  assert.match(result.stderr, /reloading will not clear it/);
+  assert.match(result.stderr, /no --harness flag/);
+});
+
+test('a clean install prints no shadow warning', () => {
+  const workspace = makeTempDir();
+
+  const result = spawnSync(process.execPath, [cliPath, 'install'], { cwd: workspace, encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stderr, /discovery roots/);
 });
 
 test('package remains independent from @corpay/ai-dlc-toolkit', () => {

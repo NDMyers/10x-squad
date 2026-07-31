@@ -20,11 +20,12 @@ Acquire one catalog for the active harness and retain this shape in session stat
 
 ## copilot-vscode adapter
 
-1. Prefer a structured selectable-subagent-model list exposed by the active agent tool.
-2. Otherwise call `runSubagent` with the impossible identifier `__10x_catalog_probe__` and the no-side-effect prompt `Do not read files, write files, or invoke tools.` The expected path is rejection before child launch with the active-session selectable list.
-3. Convert only returned exact labels into `catalog.models`; never supplement them from documentation, provider pages, another surface, or memory.
-4. Filter forbidden entries while preserving every remaining string byte-for-byte.
-5. If no reliable list is returned, STOP and show the raw harness error. There is no hardcoded fallback.
+1. Prefer a structured selectable-subagent-model list exposed by the active agent tool. `runSubagent` declares `model` as a bare `string` with no enum, so this surface exposes no such list and the probe below is the working path.
+2. Otherwise call `runSubagent` with the impossible identifier `__10x_catalog_probe__` **as the `model` argument**, `agentName` left unset, and the no-side-effect prompt `Do not read files, write files, or invoke tools.` The expected path is rejection before child launch with the active-session selectable list.
+3. **The probe belongs in `model`, never in `agentName`.** These are separate optional parameters resolved in that order, and an unknown agent name is rejected during agent lookup — before model validation ever runs. `Requested agent '__10x_catalog_probe__' not found` is therefore a mis-targeted probe returning no catalog, not a harness that lacks one; re-issue it against `model` rather than treating it as the STOP condition in step 6.
+4. Convert only returned exact labels into `catalog.models`; never supplement them from documentation, provider pages, another surface, or memory.
+5. Filter forbidden entries while preserving every remaining string byte-for-byte. `runSubagent` documents `model` as `"Model Name (Vendor)"`, so a well-formed label on this surface carries its vendor suffix (e.g. `GPT-5.6 Terra (copilot)`); a bare slug such as `gpt-5.6-terra` is a foreign-surface identifier and must never be stored here.
+6. If no reliable list is returned, STOP and show the raw harness error. There is no hardcoded fallback.
 
 ## copilot-cli adapter
 
@@ -121,11 +122,13 @@ Require exit 0 and exactly one JSON object. Malformed output or exit 2 stops. Re
 
 Remove `RESOLVE_REQUEST.json` in a per-invocation `finally` before preparing the next model intent. The outer unconditional cleanup remains responsible for interruption or other abnormal exits.
 
-Once all five tier selections are `exact` or affirmative-confirmed `likely`, create `$SESSION_SCRATCH/SESSION.json` with exclusive creation and the fields `harness`, `catalog`, and `selections`. Each `selections[tier]` is a wrapper: `selections[tier].resolution` is the entire, unmodified single JSON object returned by that tier's `resolve` invocation. Add canonical `reasoning_effort` and `context_tier` siblings. For a likely match, add `confirmed: true` only after affirmative confirmation; `confirmed` is a sibling of `resolution`, never nested inside it. Every new session carries both settings on all five selections, including explicit `auto` values.
+Once every distinct model intent is `exact` or affirmative-confirmed `likely`, describe the chosen entry path as a **plan** rather than assembling thirty cells by hand. Create `$SESSION_SCRATCH/PLAN.json` with exclusive creation and the fields `harness`, `catalog`, `plan`, and optionally `parent_catalog` and `advisory`.
 
-This complete session is executable as written:
+`plan.mode` is one of `default_all`, `role_lanes`, `per_tier`, or `matrix`. Each `model` field holds the entire, unmodified single JSON object returned by that intent's `resolve` invocation. For a likely match add `confirmed: true` as a sibling of `model`, never nested inside it. `reasoning_effort` and `context_tier` default to `auto` where a plan omits them; a lane's `effort_curve` and optional `context_curve` carry all five canonical tier keys.
 
-<!-- executable-session-example:start -->
+This complete plan is executable as written, and expands into the full 6 × 5 matrix:
+
+<!-- executable-plan-example:start -->
 ```json
 {
   "harness": "copilot-cli",
@@ -136,16 +139,40 @@ This complete session is executable as written:
     "models": ["example-model-alpha", "example-model-beta"],
     "excluded": []
   },
-  "selections": {
-    "trivial": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},"reasoning_effort":"auto","context_tier":"auto"},
-    "lite": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},"reasoning_effort":"low","context_tier":"auto"},
-    "standard_clear": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"likely","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":true},"confirmed":true,"reasoning_effort":"auto","context_tier":"long_context"},
-    "standard_ambiguous": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-beta","candidates":["example-model-beta"],"requires_confirmation":false},"reasoning_effort":"medium","context_tier":"default"},
-    "complex": {"resolution":{"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},"reasoning_effort":"xhigh","context_tier":"long_context"}
+  "plan": {
+    "mode": "role_lanes",
+    "lanes": {
+      "thinker": {
+        "model": {"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},
+        "effort_curve": {"trivial":"auto","lite":"low","standard_clear":"medium","standard_ambiguous":"high","complex":"xhigh"},
+        "context_curve": {"trivial":"auto","lite":"auto","standard_clear":"default","standard_ambiguous":"long_context","complex":"long_context"}
+      },
+      "builder": {
+        "model": {"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"likely","candidate":"example-model-beta","candidates":["example-model-beta"],"requires_confirmation":true},
+        "confirmed": true,
+        "effort_curve": {"trivial":"auto","lite":"auto","standard_clear":"low","standard_ambiguous":"medium","complex":"medium"},
+        "context_curve": {"trivial":"auto","lite":"auto","standard_clear":"auto","standard_ambiguous":"default","complex":"default"}
+      },
+      "reviewer": {
+        "model": {"harness":"copilot-cli","selectable_models":["example-model-alpha","example-model-beta"],"excluded":[],"state":"exact","candidate":"example-model-alpha","candidates":["example-model-alpha"],"requires_confirmation":false},
+        "effort_curve": {"trivial":"low","lite":"medium","standard_clear":"high","standard_ambiguous":"high","complex":"xhigh"},
+        "context_curve": {"trivial":"auto","lite":"auto","standard_clear":"default","standard_ambiguous":"long_context","complex":"long_context"}
+      }
+    }
   }
 }
 ```
-<!-- executable-session-example:end -->
+<!-- executable-plan-example:end -->
+
+Expand it into the session with the sole selections builder:
+
+<!-- resolver-command:expand-selections:start -->
+```sh
+node "$SKILL_ROOT/scripts/model-id-resolver.js" expand-selections --input "$SESSION_SCRATCH/PLAN.json"
+```
+<!-- resolver-command:expand-selections:end -->
+
+Require exit 0 and exactly one JSON object carrying all six canonical persona keys, each with all five canonical tier keys. Save those exact stdout bytes by exclusive creation at `$SESSION_SCRATCH/SESSION.json`; never hand-edit the expansion. Each `selections[persona][tier]` is a wrapper whose `resolution` is the unmodified resolver object, with canonical `reasoning_effort` and `context_tier` siblings and `confirmed: true` where a likely match was affirmed. **No lane, role, or mode marker survives expansion** — the session and every downstream artifact contain only explicit per-persona cells.
 
 Then run:
 
@@ -155,7 +182,9 @@ node "$SKILL_ROOT/scripts/model-id-resolver.js" verification-targets --input "$S
 ```
 <!-- resolver-command:verification-targets:end -->
 
-Require exit 0, exactly five assignments, all five `dispatch_settings` entries, and deduplicated `verification_targets`. Verification is deduplicated by the complete tuple `(model, reasoning_effort, context_tier)`. The same model with different settings therefore produces different targets. Each target has this resolver-owned shape:
+Require exit 0, exactly six persona rows of five assignments each, the matching `dispatch_settings` matrix, and deduplicated `verification_targets`. Verification is deduplicated by the complete tuple `(model, reasoning_effort, context_tier)`, which is persona independent — six personas sharing one model and effort still cost exactly one probe. The same model with different settings therefore produces different targets.
+
+Widening to thirty cells does not multiply probes, but it does raise the ceiling. Report the number of unique verification targets before the first probe; when it exceeds five, state the count explicitly and obtain confirmation before probing. Typical counts: `default_all` 1, `role_lanes` up to 15 (commonly around 9), `per_tier` up to 5, `matrix` up to 30. Each target has this resolver-owned shape:
 
 ```json
 {"id":"[\"example-model-alpha\",\"auto\",\"long_context\"]","model":"example-model-alpha","reasoning_effort":"auto","context_tier":"long_context","dispatch_arguments":{"model":"example-model-alpha","context_tier":"long_context"}}
@@ -189,7 +218,16 @@ node "$SKILL_ROOT/scripts/model-tier-config.js" upsert-profile --input "$SESSION
 ```
 <!-- config-command:upsert-profile:end -->
 
-Cleanup runs unconditionally in a `finally-style` path on success, cancellation, hard-block/stop, error, or interruption: remove `RESOLVE_REQUEST.json`, `SESSION.json`, `PROPOSAL.json`, other transient proposals, and then the session-owned scratch directory. Never create the scratch directory under `.10x-squad`, overwrite anything pre-existing, or commit it.
+Cleanup runs unconditionally in a `finally-style` path on success, cancellation, hard-block/stop, error, or interruption: remove `RESOLVE_REQUEST.json`, `PLAN.json`, `SESSION.json`, `PROPOSAL.json`, other transient proposals, and then the session-owned scratch directory. Never create the scratch directory under `.10x-squad`, overwrite anything pre-existing, or commit it.
+
+## Vivaldi's advisory row
+
+An advisory names the model a work tier wants for Vivaldi's **own** session. It is optional, and it is a recommendation the squad reports — never one it applies.
+
+1. **Resolve it against the parent catalog, not the spawn catalog.** Vivaldi runs as the root session, so its model is a parent model. The spawn catalog is a strictly smaller set (on the reference Codex account, two spawnable models against six listed), and resolving a parent intent against it would reject a legitimate recommendation. Acquire the parent catalog with the harness's parent-catalog step above and pass it as `parent_catalog` alongside `catalog`.
+2. **Never probe it.** Probing means dispatching a child, which is the wrong signal for a parent model and will usually fail outright. Advisory entries produce no verification target and no `model_checks` entry; the evidence gate below does not apply to them.
+3. Supply `advisory.vivaldi[tier]` as `{model, confirmed?, reasoning_effort}`, where `model` is the unmodified `resolve` output. `reasoning_effort` is capability-gated per harness exactly as a dispatch setting is. There is no `context_tier`: no surface lets a session choose its own parent's context tier.
+4. Skipping the advisory entirely is a normal outcome. `resolve-advisory` then reports `{"ok":true,"advisory":false}` with exit 0, and Vivaldi announces nothing.
 
 ## Evidence gate
 

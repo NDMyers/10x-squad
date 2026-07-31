@@ -14,44 +14,35 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const SCHEMA_VERSION = 2;
-const READABLE_SCHEMA_VERSIONS = new Set([1, 2]);
-const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
-const CONFIG_FIELDS = new Set(['schema_version', 'updated_at', 'harnesses']);
-const PROFILE_FIELDS = new Set(['assignments', 'dispatch_settings', 'model_checks']);
-const DISPATCH_SETTING_FIELDS = new Set(['reasoning_effort', 'context_tier']);
+const CONSTANTS = require('./routing-constants.js');
 
-// Per-harness runtime-setting vocabulary. A harness absent from this map allows
-// only `auto`/`auto` — the safe posture for a surface whose dispatch contract
-// has not been verified (this is how copilot-vscode behaves). Per-MODEL
-// reasoning-effort legality (e.g. gpt-5.5 rejecting `ultra`) is a live-catalog
-// fact, NOT encoded here: the dependency-free engine never hardcodes model
-// facts. That check lives in the configure-tiers skill against the acquired
-// catalog and is finally enforced by the harness at spawn time (fail-loud).
-// See docs/codex-harness-spike.md (C7/C9) and references/model-resolution.md.
-const HARNESS_DISPATCH_CAPABILITIES = {
-  'copilot-cli': {
-    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh']),
-    context_tier: new Set(['auto', 'default', 'long_context']),
-  },
-  'codex-cli': {
-    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
-    context_tier: new Set(['auto']),
-  },
-  // Same vocabulary as codex-cli, established from codex-app's own evidence
-  // (Probe F) rather than copied: its spawn tool takes model + reasoning_effort
-  // and no context parameter, and its catalog reports the same effort levels.
-  // Separate key because the surfaces run different engine builds and their
-  // spawnable sets drift independently (docs/codex-harness-spike.md, Probe I1).
-  'codex-app': {
-    reasoning_effort: new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
-    context_tier: new Set(['auto']),
-  },
-};
-const DEFAULT_DISPATCH_CAPABILITY = {
-  reasoning_effort: new Set(['auto']),
-  context_tier: new Set(['auto']),
-};
+const SCHEMA_VERSION = 3;
+const READABLE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+// Schema 3 routes on a (persona, tier) coordinate: `assignments` and
+// `dispatch_settings` become persona-major matrices. Versions 1 and 2 stay
+// readable and broadcast their single tier row to every persona, so no existing
+// install breaks. The stored `schema_version` is the ONLY version discriminator
+// — never infer the shape by sniffing leaf types.
+const MATRIX_SCHEMA_VERSION = 3;
+const { TIER_KEYS, PERSONA_KEYS, ADVISORY_KEYS } = CONSTANTS;
+const CONFIG_FIELDS = new Set(['schema_version', 'updated_at', 'harnesses']);
+const PROFILE_FIELDS = new Set(['assignments', 'dispatch_settings', 'advisory', 'model_checks']);
+const DISPATCH_SETTING_FIELDS = new Set(['reasoning_effort', 'context_tier']);
+// Advisory entries carry no context_tier: no surface lets a session choose the
+// context tier of its own parent, and offering the field would imply otherwise.
+const ADVISORY_ENTRY_FIELDS = new Set(['model', 'reasoning_effort']);
+
+// Per-harness runtime-setting vocabulary, wrapped for set membership from the
+// canonical arrays in routing-constants.js. `new Set(array)` preserves insertion
+// order, so the accepted-value lists in error messages stay byte-identical to
+// the declared vocabulary.
+function asCapability({ reasoning_effort, context_tier }) {
+  return { reasoning_effort: new Set(reasoning_effort), context_tier: new Set(context_tier) };
+}
+const HARNESS_DISPATCH_CAPABILITIES = Object.fromEntries(
+  Object.entries(CONSTANTS.HARNESS_DISPATCH_CAPABILITIES).map(([h, cap]) => [h, asCapability(cap)])
+);
+const DEFAULT_DISPATCH_CAPABILITY = asCapability(CONSTANTS.DEFAULT_DISPATCH_CAPABILITY);
 
 function dispatchCapability(harness) {
   // Object.hasOwn, not a bare lookup: a harness literally named "__proto__" (or
@@ -111,6 +102,9 @@ function fieldError(where, field) {
   return `${where}: ${kind} ${JSON.stringify(field)} is not allowed`;
 }
 
+// One persona's settings row: exactly the five canonical tiers. Under schema 1
+// and 2 the profile carries a single unnamed row; under schema 3 it carries one
+// per persona, and this is the shared leaf validator for both.
 function validateDispatchSettings(dispatchSettings, { where = 'dispatch_settings', harness } = {}) {
   const errors = [];
   if (!isPlainObject(dispatchSettings)) {
@@ -145,10 +139,132 @@ function validateDispatchSettings(dispatchSettings, { where = 'dispatch_settings
   return errors;
 }
 
+// Schema 3: one settings row per persona.
+function validateDispatchSettingsMatrix(matrix, { where = 'dispatch_settings', harness } = {}) {
+  if (!isPlainObject(matrix)) {
+    return [`${where} must be an object with exactly the six canonical persona keys`];
+  }
+  const errors = [];
+  for (const persona of PERSONA_KEYS) {
+    if (!Object.hasOwn(matrix, persona)) {
+      errors.push(`${where}: missing canonical persona key ${JSON.stringify(persona)}`);
+      continue;
+    }
+    errors.push(...validateDispatchSettings(matrix[persona], { where: `${where}.${persona}`, harness }));
+  }
+  for (const key of Object.keys(matrix)) {
+    if (!PERSONA_KEYS.includes(key)) errors.push(fieldError(where, key));
+  }
+  return errors;
+}
+
+// One persona's assignment row: exactly the five canonical tiers, each an exact
+// model identifier.
+function validateAssignmentRow(row, { where = 'assignments' } = {}) {
+  if (!isPlainObject(row)) {
+    return [`${where} must be an object with exactly the five canonical tier keys`];
+  }
+  const errors = [];
+  for (const tier of TIER_KEYS) {
+    if (!Object.hasOwn(row, tier)) {
+      errors.push(`${where}: missing canonical tier key ${JSON.stringify(tier)}`);
+      continue;
+    }
+    const v = row[tier];
+    if (typeof v !== 'string' || v.trim() === '') {
+      errors.push(`${where}.${tier}: value must be a non-empty exact model identifier, got ${JSON.stringify(v)}`);
+    } else if (isForbiddenAssignment(v)) {
+      errors.push(`${where}.${tier}: ${JSON.stringify(v)} is not an exact model identifier (auto/inherit are banned)`);
+    }
+  }
+  for (const key of Object.keys(row)) {
+    if (!TIER_KEYS.includes(key)) {
+      errors.push(`${where}: unknown tier key ${JSON.stringify(key)}; canonical keys are ${TIER_KEYS.join(', ')}`);
+    }
+  }
+  return errors;
+}
+
+// Schema 3: one assignment row per persona.
+function validateAssignmentMatrix(matrix, { where = 'assignments' } = {}) {
+  if (!isPlainObject(matrix)) {
+    return [`${where} must be an object with exactly the six canonical persona keys`];
+  }
+  const errors = [];
+  for (const persona of PERSONA_KEYS) {
+    if (!Object.hasOwn(matrix, persona)) {
+      errors.push(`${where}: missing canonical persona key ${JSON.stringify(persona)}`);
+      continue;
+    }
+    errors.push(...validateAssignmentRow(matrix[persona], { where: `${where}.${persona}` }));
+  }
+  for (const key of Object.keys(matrix)) {
+    if (!PERSONA_KEYS.includes(key)) {
+      errors.push(`${where}: unknown persona key ${JSON.stringify(key)}; canonical keys are ${PERSONA_KEYS.join(', ')}`);
+    }
+  }
+  return errors;
+}
+
+// Advisory rows are recommendations for a session the squad cannot actuate, so
+// they are validated for shape but never probed and never enter `model_checks`.
+// Optional throughout: absence is a legitimate configuration, not an error.
+function validateAdvisory(advisory, { where = 'advisory', harness } = {}) {
+  if (!isPlainObject(advisory)) {
+    return [`${where} must be an object keyed by advisory role`];
+  }
+  const errors = [];
+  const cap = dispatchCapability(harness);
+  const forHarness = `for harness ${JSON.stringify(harness ?? 'unknown')}`;
+  for (const role of ADVISORY_KEYS) {
+    if (!Object.hasOwn(advisory, role)) {
+      errors.push(`${where}: missing canonical advisory key ${JSON.stringify(role)}`);
+      continue;
+    }
+    const row = advisory[role];
+    if (!isPlainObject(row)) {
+      errors.push(`${where}.${role} must be an object with exactly the five canonical tier keys`);
+      continue;
+    }
+    for (const tier of TIER_KEYS) {
+      if (!Object.hasOwn(row, tier)) {
+        errors.push(`${where}.${role}: missing canonical tier key ${JSON.stringify(tier)}`);
+        continue;
+      }
+      const entry = row[tier];
+      if (!isPlainObject(entry)) {
+        errors.push(`${where}.${role}.${tier}: entry must be an object`);
+        continue;
+      }
+      for (const field of Object.keys(entry)) {
+        if (!ADVISORY_ENTRY_FIELDS.has(field)) errors.push(fieldError(`${where}.${role}.${tier}`, field));
+      }
+      const model = entry.model;
+      if (typeof model !== 'string' || model.trim() === '') {
+        errors.push(`${where}.${role}.${tier}.model: value must be a non-empty exact model identifier, got ${JSON.stringify(model)}`);
+      } else if (isForbiddenAssignment(model)) {
+        errors.push(`${where}.${role}.${tier}.model: ${JSON.stringify(model)} is not an exact model identifier (auto/inherit are banned)`);
+      }
+      if (!Object.hasOwn(entry, 'reasoning_effort') || !cap.reasoning_effort.has(entry.reasoning_effort)) {
+        errors.push(`${where}.${role}.${tier}.reasoning_effort must be one of ${[...cap.reasoning_effort].join(', ')} ${forHarness}`);
+      }
+    }
+    for (const key of Object.keys(row)) {
+      if (!TIER_KEYS.includes(key)) errors.push(fieldError(`${where}.${role}`, key));
+    }
+  }
+  for (const key of Object.keys(advisory)) {
+    if (!ADVISORY_KEYS.includes(key)) errors.push(fieldError(where, key));
+  }
+  return errors;
+}
+
 // Validates a single-harness proposal
-// ({assignments, dispatch_settings?, model_checks?}) with the strict field
-// allowlist. Values are opaque and never scanned for secret-like text; only
-// field NAMES are policed.
+// ({assignments, dispatch_settings?, advisory?, model_checks?}) with the strict
+// field allowlist. Schema 3 only: proposals are always freshly built by the
+// resolver's build-profile, so a legacy-shaped proposal is a stale artifact and
+// failing it loudly is correct. Values are opaque and never scanned for
+// secret-like text; only field NAMES are policed.
 function validateProfile(profile, { harness } = {}) {
   const errors = [];
   if (!isPlainObject(profile)) {
@@ -159,30 +275,14 @@ function validateProfile(profile, { harness } = {}) {
   }
 
   const a = Object.hasOwn(profile, 'assignments') ? profile.assignments : undefined;
-  if (!isPlainObject(a)) {
-    errors.push('assignments must be an object with exactly the five canonical tier keys');
-  } else {
-    for (const tier of TIER_KEYS) {
-      if (!Object.hasOwn(a, tier)) {
-        errors.push(`assignments: missing canonical tier key ${JSON.stringify(tier)}`);
-        continue;
-      }
-      const v = a[tier];
-      if (typeof v !== 'string' || v.trim() === '') {
-        errors.push(`assignments.${tier}: value must be a non-empty exact model identifier, got ${JSON.stringify(v)}`);
-      } else if (isForbiddenAssignment(v)) {
-        errors.push(`assignments.${tier}: ${JSON.stringify(v)} is not an exact model identifier (auto/inherit are banned)`);
-      }
-    }
-    for (const key of Object.keys(a)) {
-      if (!TIER_KEYS.includes(key)) {
-        errors.push(`assignments: unknown tier key ${JSON.stringify(key)}; canonical keys are ${TIER_KEYS.join(', ')}`);
-      }
-    }
-  }
+  errors.push(...validateAssignmentMatrix(a));
 
   if (Object.hasOwn(profile, 'dispatch_settings')) {
-    errors.push(...validateDispatchSettings(profile.dispatch_settings, { harness }));
+    errors.push(...validateDispatchSettingsMatrix(profile.dispatch_settings, { harness }));
+  }
+
+  if (Object.hasOwn(profile, 'advisory')) {
+    errors.push(...validateAdvisory(profile.advisory, { harness }));
   }
 
   if (Object.hasOwn(profile, 'model_checks')) {
@@ -213,6 +313,20 @@ function validateProfile(profile, { harness } = {}) {
   return errors.length ? { ok: false, errors } : { ok: true };
 }
 
+// Stored-file assignment check for one tier row. Deliberately terser than the
+// proposal-side message: a corrupt stored file is reported to a user who is
+// about to re-run configure, not to a builder debugging a proposal.
+function storedAssignmentRowErrors(row, where) {
+  const errors = [];
+  for (const tier of TIER_KEYS) {
+    const v = row[tier];
+    if (!Object.hasOwn(row, tier) || typeof v !== 'string' || v.trim() === '' || isForbiddenAssignment(v)) {
+      errors.push(`${where}.${tier}: missing or invalid exact model identifier`);
+    }
+  }
+  return errors;
+}
+
 // Validates a whole stored config file. Assignments are strict (they are the
 // executable routing source); model_checks entries are advisory at read time
 // and unusable entries degrade to "unverified" instead of invalidating the
@@ -241,26 +355,50 @@ function validateConfigShape(cfg) {
     for (const field of Object.keys(profile)) {
       if (!PROFILE_FIELDS.has(field)) errors.push(fieldError(`harnesses.${harness}`, field));
     }
+    const isMatrix = cfg.schema_version === MATRIX_SCHEMA_VERSION;
     const a = Object.hasOwn(profile, 'assignments') ? profile.assignments : undefined;
     if (!isPlainObject(a)) {
       errors.push(`harnesses.${harness}.assignments must be an object`);
       continue;
     }
-    for (const tier of TIER_KEYS) {
-      const v = a[tier];
-      if (!Object.hasOwn(a, tier) || typeof v !== 'string' || v.trim() === '' || isForbiddenAssignment(v)) {
-        errors.push(`harnesses.${harness}.assignments.${tier}: missing or invalid exact model identifier`);
+    if (isMatrix) {
+      for (const persona of PERSONA_KEYS) {
+        if (!Object.hasOwn(a, persona) || !isPlainObject(a[persona])) {
+          errors.push(`harnesses.${harness}.assignments.${persona}: missing or invalid persona row`);
+          continue;
+        }
+        errors.push(...storedAssignmentRowErrors(a[persona], `harnesses.${harness}.assignments.${persona}`));
       }
-    }
-    for (const key of Object.keys(a)) {
-      if (!TIER_KEYS.includes(key)) errors.push(`harnesses.${harness}.assignments: unknown tier key ${JSON.stringify(key)}`);
+      for (const key of Object.keys(a)) {
+        if (!PERSONA_KEYS.includes(key)) {
+          errors.push(`harnesses.${harness}.assignments: unknown persona key ${JSON.stringify(key)}`);
+        }
+      }
+    } else {
+      errors.push(...storedAssignmentRowErrors(a, `harnesses.${harness}.assignments`));
+      for (const key of Object.keys(a)) {
+        if (!TIER_KEYS.includes(key)) errors.push(`harnesses.${harness}.assignments: unknown tier key ${JSON.stringify(key)}`);
+      }
     }
     if (Object.hasOwn(profile, 'dispatch_settings')) {
       if (cfg.schema_version === 1) {
         errors.push(`harnesses.${harness}.dispatch_settings is not allowed in schema version 1`);
       } else {
-        errors.push(...validateDispatchSettings(profile.dispatch_settings, {
+        const check = isMatrix ? validateDispatchSettingsMatrix : validateDispatchSettings;
+        errors.push(...check(profile.dispatch_settings, {
           where: `harnesses.${harness}.dispatch_settings`,
+          harness,
+        }));
+      }
+    }
+    // `advisory` is schema-3 only, rejected below 3 exactly as `dispatch_settings`
+    // is rejected below 2.
+    if (Object.hasOwn(profile, 'advisory')) {
+      if (!isMatrix) {
+        errors.push(`harnesses.${harness}.advisory is not allowed in schema version ${cfg.schema_version}`);
+      } else {
+        errors.push(...validateAdvisory(profile.advisory, {
+          where: `harnesses.${harness}.advisory`,
           harness,
         }));
       }
@@ -306,27 +444,81 @@ function dispatchSettingFor(profile, tier) {
 }
 
 function effectiveDispatchSettings(profile) {
-  return Object.fromEntries(TIER_KEYS.map((tier) => [tier, dispatchSettingFor(profile, tier)]));
+  return Object.fromEntries(PERSONA_KEYS.map((persona) => [
+    persona,
+    Object.fromEntries(TIER_KEYS.map((tier) => [tier, dispatchSettingForCell(profile, persona, tier)])),
+  ]));
 }
 
 // ---------------------------------------------------------------------------
 // Expansion, mutation
 // ---------------------------------------------------------------------------
 
+// Schema 1 and 2 store one tier row shared by every persona. Broadcasting that
+// row is exactly how those versions have always resolved, so the conversion is
+// semantics-preserving — it is a change of shape, never of routing.
+function broadcastTierRow(row) {
+  const matrix = {};
+  for (const persona of PERSONA_KEYS) {
+    defineOwnDataProperty(matrix, persona, structuredClone(row));
+  }
+  return matrix;
+}
+
+// The single place a legacy profile becomes a matrix. Everything downstream of
+// this reads one shape, so no other function needs a version check.
+function normalizeProfileToMatrix(profile, schemaVersion) {
+  if (schemaVersion === MATRIX_SCHEMA_VERSION) return profile;
+  // Object.hasOwn throughout: an inherited `dispatch_settings` is not stored
+  // data and must read as omitted, not as configuration.
+  const normalized = { assignments: broadcastTierRow(profile.assignments) };
+  if (Object.hasOwn(profile, 'dispatch_settings') && isPlainObject(profile.dispatch_settings)) {
+    normalized.dispatch_settings = broadcastTierRow(profile.dispatch_settings);
+  }
+  if (Object.hasOwn(profile, 'model_checks') && isPlainObject(profile.model_checks)) {
+    normalized.model_checks = profile.model_checks;
+  }
+  return normalized;
+}
+
+// Matrix-shaped settings lookup for one (persona, tier) cell. Keeps the v1
+// fallback: a profile that stored no settings at all resolves to auto/auto.
+function dispatchSettingForCell(profile, persona, tier) {
+  const settings = isPlainObject(profile)
+    && Object.hasOwn(profile, 'dispatch_settings')
+    && isPlainObject(profile.dispatch_settings)
+    ? profile.dispatch_settings
+    : undefined;
+  const row = settings && Object.hasOwn(settings, persona) ? settings[persona] : undefined;
+  const setting = isPlainObject(row) && Object.hasOwn(row, tier) ? row[tier] : undefined;
+  return isPlainObject(setting)
+    ? { reasoning_effort: setting.reasoning_effort, context_tier: setting.context_tier }
+    : automaticDispatchSetting();
+}
+
 function expandDefaultAll(modelId) {
   if (typeof modelId !== 'string' || modelId.trim() === '') {
     throw new Error('default-all requires a non-empty exact model identifier');
   }
-  const assignments = {};
-  for (const tier of TIER_KEYS) assignments[tier] = modelId;
-  return assignments;
+  const row = {};
+  for (const tier of TIER_KEYS) row[tier] = modelId;
+  return broadcastTierRow(row);
 }
 
 function normalizeProfile(profile) {
+  // structuredClone, not a spread: the assignments matrix is two levels deep, so
+  // a shallow copy would leave every persona row aliased to the proposal's.
   const stored = {
-    assignments: { ...profile.assignments },
+    assignments: structuredClone(profile.assignments),
     dispatch_settings: effectiveDispatchSettings(profile),
   };
+  if (
+    Object.hasOwn(profile, 'advisory')
+    && isPlainObject(profile.advisory)
+    && Object.keys(profile.advisory).length > 0
+  ) {
+    stored.advisory = structuredClone(profile.advisory);
+  }
   if (
     Object.hasOwn(profile, 'model_checks')
     && isPlainObject(profile.model_checks)
@@ -346,10 +538,29 @@ function upsertProfile(config, harness, profile, nowIso) {
   const base = config
     ? structuredClone(config)
     : { schema_version: SCHEMA_VERSION, updated_at: nowIso, harnesses: {} };
+  const priorVersion = base.schema_version;
   base.schema_version = SCHEMA_VERSION;
   base.updated_at = nowIso;
+  upgradeRetainedProfiles(base, priorVersion, harness);
   defineOwnDataProperty(base.harnesses, harness, normalizeProfile(profile));
   return base;
+}
+
+// The whole file carries one schema_version, so stamping 3 obliges every
+// retained profile to be matrix-shaped — otherwise the write produces a file
+// that fails its own validation. Broadcasting is exactly how those profiles
+// already resolved, so unrelated harnesses keep their routing semantics intact
+// even though their stored shape changes.
+function upgradeRetainedProfiles(base, priorVersion, skipHarness) {
+  if (priorVersion === undefined || priorVersion >= MATRIX_SCHEMA_VERSION) return;
+  for (const retained of Object.keys(base.harnesses)) {
+    if (retained === skipHarness) continue;
+    defineOwnDataProperty(
+      base.harnesses,
+      retained,
+      normalizeProfileToMatrix(base.harnesses[retained], priorVersion)
+    );
+  }
 }
 
 function removeProfile(config, harness, nowIso = new Date().toISOString()) {
@@ -361,8 +572,12 @@ function removeProfile(config, harness, nowIso = new Date().toISOString()) {
   if (Object.keys(base.harnesses).length === 0) {
     return { config: null, removed: true }; // caller deletes the file, directory stays
   }
+  const priorVersion = base.schema_version;
   base.schema_version = SCHEMA_VERSION;
   base.updated_at = nowIso;
+  // Removal restamps the version too, so the surviving profiles must be
+  // upgraded with it or the write leaves a file that fails validation.
+  upgradeRetainedProfiles(base, priorVersion, null);
   return { config: base, removed: true };
 }
 
@@ -370,20 +585,43 @@ function removeProfile(config, harness, nowIso = new Date().toISOString()) {
 // Resolution
 // ---------------------------------------------------------------------------
 
+// The single boundary where a stored profile becomes a matrix. Callers past this
+// point never check a schema version, because there is only one shape past here.
 function effectiveProfile({ workspaceConfig, globalConfig, harness }) {
   const ws = ownHarnessProfile(workspaceConfig, harness);
-  if (ws) return { scope: 'workspace', schema_version: workspaceConfig.schema_version, profile: ws };
+  if (ws) {
+    return {
+      scope: 'workspace',
+      schema_version: workspaceConfig.schema_version,
+      profile: normalizeProfileToMatrix(ws, workspaceConfig.schema_version),
+    };
+  }
   const glob = ownHarnessProfile(globalConfig, harness);
-  if (glob) return { scope: 'global', schema_version: globalConfig.schema_version, profile: glob };
+  if (glob) {
+    return {
+      scope: 'global',
+      schema_version: globalConfig.schema_version,
+      profile: normalizeProfileToMatrix(glob, globalConfig.schema_version),
+    };
+  }
   return null;
 }
 
-function resolve({ workspaceConfig, globalConfig, harness, tier }) {
+function resolve({ workspaceConfig, globalConfig, harness, tier, persona }) {
+  // Both caller-supplied routing coordinates are checked before any file state,
+  // so bad input never reports as a configuration problem.
   if (!TIER_KEYS.includes(tier)) {
     return {
       ok: false,
       code: EXIT.TIER,
       message: `Invalid tier ${JSON.stringify(tier)}. Canonical keys: ${TIER_KEYS.join(', ')}.`,
+    };
+  }
+  if (persona !== undefined && !PERSONA_KEYS.includes(persona)) {
+    return {
+      ok: false,
+      code: EXIT.TIER,
+      message: `Invalid persona ${JSON.stringify(persona)}. Canonical keys: ${PERSONA_KEYS.join(', ')}.`,
     };
   }
   if (!workspaceConfig && !globalConfig) {
@@ -401,17 +639,51 @@ function resolve({ workspaceConfig, globalConfig, harness, tier }) {
       message: `No profile for harness ${JSON.stringify(harness)} in workspace or global configuration. ${CONFIGURE_HINT}`,
     };
   }
-  const model = hit.profile.assignments[tier];
-  const dispatchSetting = dispatchSettingFor(hit.profile, tier);
+  // A legacy profile broadcasts one row to every persona, so a personaless
+  // library call still answers identically; the CLI requires the coordinate.
+  const row = persona ?? PERSONA_KEYS[0];
+  const model = hit.profile.assignments[row][tier];
+  const dispatchSetting = dispatchSettingForCell(hit.profile, row, tier);
   return {
     ok: true,
     schema_version: hit.schema_version,
     scope: hit.scope,
     harness,
+    persona: row,
     tier,
     model,
     check_status: usableCheckStatus(hit.profile, model),
     ...dispatchSetting,
+  };
+}
+
+// Advisory resolution is a separate command so nothing can mistake a
+// recommendation for a dispatch profile. An unconfigured advisory is a normal
+// outcome, never a failure — that is what makes "never blocks" true at the
+// engine boundary rather than only in prose.
+function resolveAdvisory({ workspaceConfig, globalConfig, harness, tier, role = ADVISORY_KEYS[0] }) {
+  if (!TIER_KEYS.includes(tier)) {
+    return {
+      ok: false,
+      code: EXIT.TIER,
+      message: `Invalid tier ${JSON.stringify(tier)}. Canonical keys: ${TIER_KEYS.join(', ')}.`,
+    };
+  }
+  const hit = effectiveProfile({ workspaceConfig, globalConfig, harness });
+  const advisory = hit && isPlainObject(hit.profile.advisory) ? hit.profile.advisory : undefined;
+  const row = advisory && Object.hasOwn(advisory, role) ? advisory[role] : undefined;
+  const entry = isPlainObject(row) && Object.hasOwn(row, tier) ? row[tier] : undefined;
+  if (!isPlainObject(entry)) return { ok: true, advisory: false, harness, tier, role };
+  return {
+    ok: true,
+    advisory: true,
+    schema_version: hit.schema_version,
+    scope: hit.scope,
+    harness,
+    role,
+    tier,
+    model: entry.model,
+    reasoning_effort: entry.reasoning_effort,
   };
 }
 
@@ -473,7 +745,8 @@ const USAGE = [
   '  diff-profile     --input <profile.json> --scope <global|workspace> --workspace-root <path> --harness <surface>',
   '  upsert-profile   --input <profile.json> --scope <global|workspace> --workspace-root <path> --harness <surface>',
   '  remove-profile   --scope workspace --workspace-root <path> --harness <surface> [--dry-run]',
-  '  resolve          --workspace-root <path> --harness <surface> --tier <tier-key> [--json]',
+  '  resolve          --workspace-root <path> --harness <surface> --tier <tier-key> --persona <persona-key> [--json]',
+  '  resolve-advisory --workspace-root <path> --harness <surface> --tier <tier-key> [--json]',
 ].join('\n');
 
 function parseFlags(argv) {
@@ -663,11 +936,32 @@ function cmdRemoveProfile(flags) {
 }
 
 function cmdResolve(flags) {
+  // --persona is required: routing is a (persona, tier) coordinate, and choosing
+  // a row on the caller's behalf would be the silent mis-route this schema
+  // exists to prevent. An orchestrator composed before this change fails loudly
+  // here rather than dispatching every persona on one profile.
+  require_(flags, ['harness', 'tier', 'persona']);
+  const paths = configPaths({ workspaceRoot: flags['workspace-root'] });
+  const workspaceConfig = paths.workspace ? readOrFail(paths.workspace) : null;
+  const globalConfig = readOrFail(paths.global);
+  const res = resolve({
+    workspaceConfig,
+    globalConfig,
+    harness: flags.harness,
+    tier: flags.tier,
+    persona: flags.persona,
+  });
+  if (!res.ok) fail(res.code, res.message);
+  emit(res);
+  process.exit(EXIT.OK);
+}
+
+function cmdResolveAdvisory(flags) {
   require_(flags, ['harness', 'tier']);
   const paths = configPaths({ workspaceRoot: flags['workspace-root'] });
   const workspaceConfig = paths.workspace ? readOrFail(paths.workspace) : null;
   const globalConfig = readOrFail(paths.global);
-  const res = resolve({ workspaceConfig, globalConfig, harness: flags.harness, tier: flags.tier });
+  const res = resolveAdvisory({ workspaceConfig, globalConfig, harness: flags.harness, tier: flags.tier });
   if (!res.ok) fail(res.code, res.message);
   emit(res);
   process.exit(EXIT.OK);
@@ -679,6 +973,7 @@ const COMMANDS = {
   'upsert-profile': cmdUpsertProfile,
   'remove-profile': cmdRemoveProfile,
   resolve: cmdResolve,
+  'resolve-advisory': cmdResolveAdvisory,
 };
 
 function main(argv) {
@@ -704,9 +999,14 @@ if (require.main === module) {
 
 module.exports = {
   SCHEMA_VERSION,
+  MATRIX_SCHEMA_VERSION,
   TIER_KEYS,
+  PERSONA_KEYS,
+  ADVISORY_KEYS,
   EXIT,
   expandDefaultAll,
+  broadcastTierRow,
+  normalizeProfileToMatrix,
   isForbiddenAssignment,
   validateProfile,
   validateConfigShape,
@@ -715,6 +1015,7 @@ module.exports = {
   removeProfile,
   effectiveProfile,
   resolve,
+  resolveAdvisory,
   configPaths,
   readConfigFile,
   atomicWriteJson,

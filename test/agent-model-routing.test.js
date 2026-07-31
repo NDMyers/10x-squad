@@ -12,6 +12,7 @@ const { composeVivaldi } = require('../lib/compose');
 
 const RESOLVER_PATH = '.github/skills/10x-squad-configure-tiers/scripts/model-tier-config.js';
 const CANONICAL = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
+const PERSONAS = ['einstein', 'peter', 'linus', 'cobalt', 'sentinel', 'ralph'];
 
 function readAgent() {
   const raw = composeVivaldi('copilot');
@@ -49,23 +50,26 @@ test('the installed resolver command is the only routing source', () => {
   const section = routingSection(readAgent().body);
   assert.ok(section.includes(RESOLVER_PATH), 'must invoke the installed resolver path');
   assert.ok(section.includes(' resolve'), 'must use the resolve subcommand');
-  for (const flag of ['--workspace-root', '--harness', '--tier', '--json']) {
+  for (const flag of ['--workspace-root', '--harness', '--tier', '--persona', '--json']) {
     assert.ok(section.includes(flag), `resolver invocation must pass ${flag}`);
   }
   for (const key of CANONICAL) {
     assert.ok(section.includes(key), `canonical tier key ${key} must be listed`);
   }
+  for (const persona of PERSONAS) {
+    assert.ok(section.includes(`\`${persona}\``), `canonical persona key ${persona} must be listed`);
+  }
 });
 
-test('resolver JSON supplies the complete three-part work-tier profile', () => {
+test('resolver JSON supplies that persona\'s complete three-part profile', () => {
   const section = routingSection(readAgent().body);
-  assert.match(section, /three-part work-tier profile/i,
-    'resolver output must be treated as one three-part work-tier profile');
-  for (const field of ['model', 'reasoning_effort', 'context_tier', 'check_status']) {
+  assert.match(section, /that persona's resolved three-part profile/i,
+    "resolver output must be treated as one persona's three-part profile");
+  for (const field of ['persona', 'model', 'reasoning_effort', 'context_tier', 'check_status']) {
     assert.ok(section.includes(`"${field}"`), `resolver JSON must contain ${field}`);
   }
   assert.match(section,
-    /consume[^.\n]*`model`[^.\n]*`reasoning_effort`[^.\n]*`context_tier`[^.\n]*`check_status`/i,
+    /consume[^.\n]*`persona`[^.\n]*`model`[^.\n]*`reasoning_effort`[^.\n]*`context_tier`[^.\n]*`check_status`/i,
     'all additive resolver fields must be consumed');
 });
 
@@ -136,15 +140,19 @@ test('routing announcement names persona tier harness and all three choices', ()
   assert.match(announcement, /including `auto`/i, 'auto choices must still be announced');
 });
 
-test('later personas reuse the profile and reclassification refreshes all three choices', () => {
+test('each persona dispatch resolves its own profile', () => {
   const section = routingSection(readAgent().body);
-  const reuse = lineContaining(section, 'Every later persona dispatch');
-  assert.match(reuse, /same resolved three-part profile/i,
-    'later personas must reuse the complete resolved profile');
+  const reuse = lineContaining(section, 'Every persona dispatch resolves its own');
+  assert.match(reuse, /never reuse another persona/i,
+    'one persona profile must never be carried to another persona');
+  assert.match(reuse, /re-?run the resolver/i);
   assert.match(reuse, /repeat[^.\n]*complete routing announcement/i,
-    'later persona dispatches must repeat the complete routing announcement');
+    'every persona dispatch must repeat the complete routing announcement');
+  // Regression guard: the retired one-profile-per-task contract must be gone.
+  assert.doesNotMatch(section, /same resolved three-part profile/i);
 
   const reclassification = lineContaining(section, 'If the work tier is reclassified');
+  assert.match(reclassification, /every subsequent dispatch re-?resolves/i);
   assert.match(reclassification, /re-?run the resolver/i);
   assert.match(reclassification, /consume and re-?announce/i);
   for (const field of ['model', 'reasoning_effort', 'context_tier']) {
@@ -182,6 +190,19 @@ test('one-dispatch overrides cover the complete profile without persistence', ()
   assert.match(override, /never store/i);
   assert.match(override, /explicit runtime override[^.\n]*active dispatch contract[^.\n]*supports/i);
   assert.match(override, /`auto` override[^.\n]*omit[^.\n]*independently/i);
+  assert.match(override, /one dispatch of one persona/i, 'an override is scoped to a single persona');
+  assert.match(override, /never propagates/i);
+});
+
+test('vivaldi announces an advisory model it can never actuate', () => {
+  const section = routingSection(readAgent().body);
+  assert.ok(section.includes('resolve-advisory'), 'TRIAGE must resolve the advisory');
+  assert.match(section, /advisory/i);
+  assert.match(section, /recommendation/i);
+  assert.match(section, /never blocks?/i, 'an advisory must never block the pipeline');
+  assert.match(section, /cannot change its own model/i);
+  assert.match(section, /announce nothing and continue/i,
+    'an unconfigured advisory must be silent, not an error');
 });
 
 test('hard failure reports the requested three-part profile', () => {
@@ -190,6 +211,9 @@ test('hard failure reports the requested three-part profile', () => {
   assert.ok(match, 'hard failure contract must be present');
   const failure = match[1];
   assert.match(failure, /requested three-part profile/i);
+  assert.match(failure, /the persona and its canonical key/i,
+    'a routing failure must name which persona failed');
+  assert.match(failure, /invalid tier or persona/i, 'exit 4 covers both routing coordinates');
   for (const field of ['model', 'reasoning_effort', 'context_tier']) {
     assert.ok(failure.includes(`\`${field}\``), `hard failure report must include ${field}`);
   }
