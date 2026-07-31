@@ -85,6 +85,16 @@ function fiveSelections(
   };
 }
 
+// Selections are persona-major now. These tests exercise tier behavior, which
+// is persona independent, so they build one row and broadcast it.
+function broadcast(row) {
+  const matrix = {};
+  for (const persona of ['einstein', 'peter', 'linus', 'cobalt', 'sentinel', 'ralph']) {
+    matrix[persona] = row;
+  }
+  return matrix;
+}
+
 function automaticSelection(candidate) {
   return { resolution: { state: 'exact', candidate } };
 }
@@ -355,39 +365,35 @@ test('verification plan requires five resolved confirmed catalog selections', ()
   const request = {
     harness: 'copilot-vscode',
     catalog: catalog([mini, advanced]),
-    selections: fiveSelections(advanced),
+    selections: broadcast(fiveSelections(advanced)),
   };
-  const missingComplex = { ...request.selections };
+  const withComplex = (selection) => {
+    const row = { ...fiveSelections(advanced), complex: selection };
+    return broadcast(row);
+  };
+
+  const missingComplex = { ...fiveSelections(advanced) };
   delete missingComplex.complex;
 
   assert.throws(
-    () => verificationPlan({ ...request, selections: missingComplex }),
+    () => verificationPlan({ ...request, selections: broadcast(missingComplex) }),
     /five canonical tier keys/
   );
   assert.throws(
-    () => verificationPlan({
-      ...request,
-      selections: {
-        ...request.selections,
-        complex: likelySelection(mini, false),
-      },
-    }),
+    () => verificationPlan({ ...request, selections: withComplex(likelySelection(mini, false)) }),
     /requires confirmation/
   );
   assert.throws(
     () => verificationPlan({
       ...request,
-      selections: {
-        ...request.selections,
-        complex: { resolution: { state: 'no_match' } },
-      },
+      selections: withComplex({ resolution: { state: 'no_match' } }),
     }),
     /is unresolved/
   );
   assert.throws(
     () => verificationPlan({
       ...request,
-      selections: fiveSelections('not in catalog'),
+      selections: broadcast(fiveSelections('not in catalog')),
     }),
     /not in active harness catalog/
   );
@@ -405,33 +411,29 @@ test('verification plan returns complete settings and exact executable tuple tar
   const result = verificationPlan({
     harness: 'copilot-cli',
     catalog: catalog([mini, advanced], 'copilot-cli'),
-    selections,
+    selections: broadcast(selections),
   });
 
+  const expectedRow = {
+    trivial: mini,
+    lite: mini,
+    standard_clear: advanced,
+    standard_ambiguous: advanced,
+    complex: advanced,
+  };
+  const expectedSettings = {
+    trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
+    lite: { reasoning_effort: 'auto', context_tier: 'auto' },
+    standard_clear: { reasoning_effort: 'medium', context_tier: 'long_context' },
+    standard_ambiguous: { reasoning_effort: 'medium', context_tier: 'long_context' },
+    complex: { reasoning_effort: 'medium', context_tier: 'long_context' },
+  };
+
   assert.deepEqual(result, {
-    assignments: {
-      trivial: mini,
-      lite: mini,
-      standard_clear: advanced,
-      standard_ambiguous: advanced,
-      complex: advanced,
-    },
-    dispatch_settings: {
-      trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
-      lite: { reasoning_effort: 'auto', context_tier: 'auto' },
-      standard_clear: {
-        reasoning_effort: 'medium',
-        context_tier: 'long_context',
-      },
-      standard_ambiguous: {
-        reasoning_effort: 'medium',
-        context_tier: 'long_context',
-      },
-      complex: {
-        reasoning_effort: 'medium',
-        context_tier: 'long_context',
-      },
-    },
+    assignments: broadcast(expectedRow),
+    dispatch_settings: broadcast(expectedSettings),
+    // Six personas sharing a tuple still cost one probe: dedup keys on the
+    // execution tuple, which is persona independent.
     verification_targets: [
       expectedTarget(mini),
       expectedTarget(advanced, 'medium', 'long_context'),
@@ -452,16 +454,16 @@ test('omitted selection settings default to auto and auto arguments are omitted'
   const result = verificationPlan({
     harness: 'copilot-vscode',
     catalog: catalog([model]),
-    selections,
+    selections: broadcast(selections),
   });
 
-  assert.deepEqual(result.dispatch_settings, {
+  assert.deepEqual(result.dispatch_settings, broadcast({
     trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
     lite: { reasoning_effort: 'auto', context_tier: 'auto' },
     standard_clear: { reasoning_effort: 'auto', context_tier: 'auto' },
     standard_ambiguous: { reasoning_effort: 'auto', context_tier: 'auto' },
     complex: { reasoning_effort: 'auto', context_tier: 'auto' },
-  });
+  }));
   assert.deepEqual(result.verification_targets, [expectedTarget(model)]);
   assert.deepEqual(result.verification_targets[0].dispatch_arguments, { model });
 });
@@ -490,7 +492,7 @@ test('verification plan rejects explicit settings for unsupported harnesses', ()
         () => verificationPlan({
           harness,
           catalog: catalog([model], harness),
-          selections,
+          selections: broadcast(selections),
         }),
         new RegExp(
           `must be one of auto for harness ${JSON.stringify(harness)}`
@@ -507,7 +509,7 @@ test('unsupported harnesses still allow automatic runtime settings', () => {
     const plan = verificationPlan({
       harness,
       catalog: catalog([model], harness),
-      selections: fiveSelections(model),
+      selections: broadcast(fiveSelections(model)),
     });
 
     assert.deepEqual(plan.verification_targets, [expectedTarget(model)]);
@@ -519,7 +521,7 @@ test('copilot-cli allows explicit reasoning and context settings', () => {
   const plan = verificationPlan({
     harness: 'copilot-cli',
     catalog: catalog([model], 'copilot-cli'),
-    selections: fiveSelections(model, 'xhigh', 'default'),
+    selections: broadcast(fiveSelections(model, 'xhigh', 'default')),
   });
 
   assert.deepEqual(plan.verification_targets, [
@@ -533,7 +535,7 @@ test('codex-cli allows max and ultra reasoning efforts', () => {
     const plan = verificationPlan({
       harness: 'codex-cli',
       catalog: catalog([model], 'codex-cli'),
-      selections: fiveSelections(model, effort, 'auto'),
+      selections: broadcast(fiveSelections(model, effort, 'auto')),
     });
     assert.deepEqual(plan.verification_targets, [expectedTarget(model, effort, 'auto')]);
   }
@@ -548,7 +550,7 @@ test('codex-cli rejects any explicit context_tier (auto only)', () => {
       () => verificationPlan({
         harness: 'codex-cli',
         catalog: catalog([model], 'codex-cli'),
-        selections,
+        selections: broadcast(selections),
       }),
       /context_tier must be one of auto for harness "codex-cli"/
     );
@@ -561,7 +563,7 @@ test('codex-app carries its own capability entry, not codex-cli\'s by inheritanc
     const plan = verificationPlan({
       harness: 'codex-app',
       catalog: catalog([model], 'codex-app'),
-      selections: fiveSelections(model, effort, 'auto'),
+      selections: broadcast(fiveSelections(model, effort, 'auto')),
     });
     assert.deepEqual(plan.verification_targets, [expectedTarget(model, effort, 'auto')]);
   }
@@ -573,7 +575,7 @@ test('codex-app carries its own capability entry, not codex-cli\'s by inheritanc
     () => verificationPlan({
       harness: 'codex-app',
       catalog: catalog([model], 'codex-app'),
-      selections,
+      selections: broadcast(selections),
     }),
     /context_tier must be one of auto for harness "codex-app"/
   );
@@ -587,7 +589,7 @@ test('copilot-cli rejects the Codex-only ultra effort', () => {
     () => verificationPlan({
       harness: 'copilot-cli',
       catalog: catalog([model], 'copilot-cli'),
-      selections,
+      selections: broadcast(selections),
     }),
     /reasoning_effort must be one of auto, low, medium, high, xhigh for harness "copilot-cli"/
   );
@@ -606,7 +608,7 @@ test('verification targets deduplicate full tuples but keep settings variants', 
   const result = verificationPlan({
     harness: 'copilot-cli',
     catalog: catalog([model], 'copilot-cli'),
-    selections,
+    selections: broadcast(selections),
   });
 
   assert.deepEqual(result.verification_targets, [
@@ -628,7 +630,7 @@ test('verification plan accepts only canonical reasoning and context settings', 
   assert.equal(verificationPlan({
     harness: 'copilot-cli',
     catalog: catalog([model], 'copilot-cli'),
-    selections: validSelections,
+    selections: broadcast(validSelections),
   }).verification_targets.length, 5);
 
   for (const invalid of ['Auto', 'inherit', '', null, 42, {}, [], undefined]) {
@@ -638,7 +640,7 @@ test('verification plan accepts only canonical reasoning and context settings', 
       () => verificationPlan({
         harness: 'copilot-cli',
         catalog: catalog([model], 'copilot-cli'),
-        selections: badReasoning,
+        selections: broadcast(badReasoning),
       }),
       /reasoning_effort must be one of auto, low, medium, high, xhigh/
     );
@@ -649,7 +651,7 @@ test('verification plan accepts only canonical reasoning and context settings', 
       () => verificationPlan({
         harness: 'copilot-cli',
         catalog: catalog([model], 'copilot-cli'),
-        selections: badContext,
+        selections: broadcast(badContext),
       }),
       /context_tier must be one of auto, default, long_context/
     );
@@ -663,7 +665,7 @@ test('invalid settings fail before profile probe construction', () => {
   const request = {
     harness: 'copilot-cli',
     catalog: catalog([model], 'copilot-cli'),
-    selections,
+    selections: broadcast(selections),
   };
   Object.defineProperty(request, 'probes', {
     get() {
@@ -694,7 +696,7 @@ test('profile builder rejects unsupported explicit settings before reading probe
     const request = {
       harness,
       catalog: catalog([model], harness),
-      selections,
+      selections: broadcast(selections),
     };
     Object.defineProperty(request, 'probes', {
       get() {
@@ -722,7 +724,7 @@ test('profile builder returns complete assignments settings and model checks', (
   const profile = buildResolvedProfile({
     harness: 'copilot-cli',
     catalog: catalog([mini, advanced], 'copilot-cli'),
-    selections,
+    selections: broadcast(selections),
     probes: Object.fromEntries([
       [miniTarget.id, successfulProbe(miniTarget)],
       [advancedTarget.id, successfulProbe(advancedTarget, {
@@ -739,8 +741,8 @@ test('profile builder returns complete assignments settings and model checks', (
     'dispatch_settings',
     'model_checks',
   ]);
-  assert.equal(profile.assignments.trivial, mini);
-  assert.deepEqual(profile.dispatch_settings, {
+  assert.equal(profile.assignments.einstein.trivial, mini);
+  assert.deepEqual(profile.dispatch_settings, broadcast({
     trivial: { reasoning_effort: 'auto', context_tier: 'auto' },
     lite: { reasoning_effort: 'medium', context_tier: 'long_context' },
     standard_clear: {
@@ -752,7 +754,7 @@ test('profile builder returns complete assignments settings and model checks', (
       context_tier: 'long_context',
     },
     complex: { reasoning_effort: 'medium', context_tier: 'long_context' },
-  });
+  }));
   assert.deepEqual(profile.model_checks, {
     [mini]: {
       status: 'unverified',
@@ -774,7 +776,7 @@ test('profile builder returns complete assignments settings and model checks', (
   const protoProfile = buildResolvedProfile({
     harness: 'copilot-vscode',
     catalog: catalog([protoModel]),
-    selections: fiveSelections(protoModel),
+    selections: broadcast(fiveSelections(protoModel)),
     probes: Object.fromEntries([
       [protoTarget.id, successfulProbe(protoTarget, {
         checked_at: '2026-07-13T01:02:00.000Z',
@@ -802,7 +804,7 @@ test('model checks stay unverified if any tuple probe lacks observable identity'
   const request = {
     harness: 'copilot-cli',
     catalog: catalog([model], 'copilot-cli'),
-    selections,
+    selections: broadcast(selections),
   };
 
   const conservative = buildResolvedProfile({
@@ -853,7 +855,7 @@ test('profile builder requires exactly one probe keyed by every target id', () =
   const request = {
     harness: 'copilot-vscode',
     catalog: catalog([model]),
-    selections: fiveSelections(model),
+    selections: broadcast(fiveSelections(model)),
   };
 
   assert.throws(
@@ -864,7 +866,7 @@ test('profile builder requires exactly one probe keyed by every target id', () =
     () => buildResolvedProfile({
       harness: 'copilot-vscode',
       catalog: catalog(['__proto__']),
-      selections: fiveSelections('__proto__'),
+      selections: broadcast(fiveSelections('__proto__')),
       probes: {},
     }),
     /missing probe/
@@ -894,7 +896,7 @@ test('profile builder rejects failed and model-mismatched probes', () => {
   const request = {
     harness: 'copilot-vscode',
     catalog: catalog([model]),
-    selections: fiveSelections(model),
+    selections: broadcast(fiveSelections(model)),
   };
 
   assert.throws(
@@ -952,7 +954,7 @@ test('probe requested arguments must exactly match dispatch arguments', () => {
   const explicitRequest = {
     harness: 'copilot-cli',
     catalog: catalog([model], 'copilot-cli'),
-    selections: fiveSelections(model, 'medium', 'long_context'),
+    selections: broadcast(fiveSelections(model, 'medium', 'long_context')),
   };
   const mismatches = [
     { model, reasoning_effort: 'medium' },
@@ -985,7 +987,7 @@ test('probe requested arguments must exactly match dispatch arguments', () => {
     () => buildResolvedProfile({
       harness: 'copilot-cli',
       catalog: catalog([model], 'copilot-cli'),
-      selections: fiveSelections(model),
+      selections: broadcast(fiveSelections(model)),
       probes: {
         [autoTarget.id]: successfulProbe(autoTarget, {
           requested_arguments: { model, reasoning_effort: 'auto' },
@@ -1122,7 +1124,7 @@ test('CLI verification-targets rejects unsupported explicit settings without out
     const requestPath = writeRequest({
       harness,
       catalog: catalog([model], harness),
-      selections,
+      selections: broadcast(selections),
     });
     const result = runResolver([
       'verification-targets',
@@ -1143,7 +1145,7 @@ test('CLI verification-targets and build-profile use the executable gate', () =>
   const session = {
     harness: 'copilot-vscode',
     catalog: catalog([model]),
-    selections: fiveSelections(model),
+    selections: broadcast(fiveSelections(model)),
     probes: {},
   };
   const requestPath = writeRequest(session);
@@ -1302,5 +1304,376 @@ test('CLI contract errors exit 2 with empty stdout and one stderr line', () => {
   assert.equal(
     unknownResult.stderr,
     'Model resolver error: unknown command "unknown"\n'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Selection expansion (persona x tier)
+// ---------------------------------------------------------------------------
+
+const { expandSelections } = require(SCRIPT);
+
+const PERSONAS = ['einstein', 'peter', 'linus', 'cobalt', 'sentinel', 'ralph'];
+const TIERS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
+const CELL_FIELDS = ['resolution', 'confirmed', 'reasoning_effort', 'context_tier'];
+
+function exactIntent(candidate) {
+  return { state: 'exact', candidate };
+}
+
+function assertCompleteMatrix(selections) {
+  assert.deepEqual(Object.keys(selections), PERSONAS, 'persona rows must be complete and ordered');
+  for (const persona of PERSONAS) {
+    assert.deepEqual(Object.keys(selections[persona]), TIERS, `${persona} row must be complete`);
+    for (const tier of TIERS) {
+      for (const field of Object.keys(selections[persona][tier])) {
+        assert.ok(CELL_FIELDS.includes(field), `${persona}.${tier} leaked field ${field}`);
+      }
+    }
+  }
+}
+
+function expandPlan(plan, extra = {}) {
+  return expandSelections({
+    harness: 'codex-app',
+    catalog: catalog(['m-top', 'm-mid', 'm-cheap'], 'codex-app'),
+    plan,
+    ...extra,
+  });
+}
+
+test('default-all expands one answer into every cell', () => {
+  const session = expandPlan({ mode: 'default_all', model: exactIntent('m-top'), reasoning_effort: 'high' });
+
+  assertCompleteMatrix(session.selections);
+  for (const persona of PERSONAS) {
+    for (const tier of TIERS) {
+      assert.equal(session.selections[persona][tier].resolution.candidate, 'm-top');
+      assert.equal(session.selections[persona][tier].reasoning_effort, 'high');
+    }
+  }
+});
+
+test('role lanes expand three answers into thirty explicit cells', () => {
+  const session = expandPlan({
+    mode: 'role_lanes',
+    lanes: {
+      thinker: {
+        model: exactIntent('m-top'),
+        effort_curve: { trivial: 'low', lite: 'medium', standard_clear: 'high', standard_ambiguous: 'xhigh', complex: 'ultra' },
+      },
+      builder: {
+        model: exactIntent('m-cheap'),
+        effort_curve: { trivial: 'low', lite: 'low', standard_clear: 'medium', standard_ambiguous: 'medium', complex: 'high' },
+      },
+      reviewer: {
+        model: exactIntent('m-mid'),
+        effort_curve: { trivial: 'low', lite: 'medium', standard_clear: 'high', standard_ambiguous: 'high', complex: 'high' },
+      },
+    },
+  });
+
+  assertCompleteMatrix(session.selections);
+  // Lane membership: thinkers get the frontier model, builders the cheap one.
+  assert.equal(session.selections.einstein.complex.resolution.candidate, 'm-top');
+  assert.equal(session.selections.peter.complex.resolution.candidate, 'm-top');
+  assert.equal(session.selections.linus.complex.resolution.candidate, 'm-cheap');
+  assert.equal(session.selections.ralph.complex.resolution.candidate, 'm-cheap');
+  assert.equal(session.selections.cobalt.complex.resolution.candidate, 'm-mid');
+  assert.equal(session.selections.sentinel.complex.resolution.candidate, 'm-mid');
+  // The curve steps by tier within a lane.
+  assert.equal(session.selections.einstein.trivial.reasoning_effort, 'low');
+  assert.equal(session.selections.einstein.complex.reasoning_effort, 'ultra');
+  assert.equal(session.selections.linus.complex.reasoning_effort, 'high');
+});
+
+test('per-tier expands five answers by broadcasting across personas', () => {
+  const tiers = Object.fromEntries(TIERS.map((tier) => [tier, { model: exactIntent('m-mid'), reasoning_effort: 'medium' }]));
+  const session = expandPlan({ mode: 'per_tier', tiers });
+
+  assertCompleteMatrix(session.selections);
+  for (const persona of PERSONAS) {
+    assert.equal(session.selections[persona].complex.resolution.candidate, 'm-mid');
+  }
+});
+
+test('full matrix passes thirty cells through unchanged', () => {
+  const cells = {};
+  for (const persona of PERSONAS) {
+    cells[persona] = Object.fromEntries(TIERS.map((tier) => [tier, {
+      model: exactIntent(`m-${persona === 'einstein' ? 'top' : 'cheap'}`),
+      reasoning_effort: persona === 'einstein' ? 'ultra' : 'low',
+    }]));
+  }
+  const session = expandPlan({ mode: 'matrix', cells });
+
+  assertCompleteMatrix(session.selections);
+  assert.equal(session.selections.einstein.trivial.reasoning_effort, 'ultra');
+  assert.equal(session.selections.ralph.trivial.reasoning_effort, 'low');
+});
+
+test('no lane, role, or mode marker survives expansion', () => {
+  const session = expandPlan({
+    mode: 'role_lanes',
+    lanes: {
+      thinker: { model: exactIntent('m-top') },
+      builder: { model: exactIntent('m-cheap') },
+      reviewer: { model: exactIntent('m-mid') },
+    },
+  });
+
+  // Key-wise, not substring-wise: "selectable_models" legitimately contains
+  // "mode", so a naive substring scan would flag a clean expansion.
+  const forbidden = new Set(['thinker', 'builder', 'reviewer', 'mode', 'lanes', 'cells', 'effort_curve', 'context_curve']);
+  const walkKeys = (node) => {
+    if (Array.isArray(node)) return node.forEach(walkKeys);
+    if (node === null || typeof node !== 'object') return;
+    for (const [key, value] of Object.entries(node)) {
+      assert.ok(!forbidden.has(key), `expansion leaked ${key}`);
+      walkKeys(value);
+    }
+  };
+  walkKeys(session.selections);
+});
+
+test('expansion rejects an unknown mode', () => {
+  assert.throws(() => expandPlan({ mode: 'whatever' }), /plan\.mode must be one of/);
+});
+
+test('expansion rejects unknown or missing lanes', () => {
+  assert.throws(
+    () => expandPlan({ mode: 'role_lanes', lanes: { thinker: { model: exactIntent('m-top') } } }),
+    /missing lane/
+  );
+  assert.throws(
+    () => expandPlan({
+      mode: 'role_lanes',
+      lanes: {
+        thinker: { model: exactIntent('m-top') },
+        builder: { model: exactIntent('m-cheap') },
+        reviewer: { model: exactIntent('m-mid') },
+        security: { model: exactIntent('m-mid') },
+      },
+    }),
+    /unknown lane/
+  );
+});
+
+test('expansion rejects an incomplete persona or tier axis', () => {
+  const cells = {};
+  for (const persona of PERSONAS) {
+    cells[persona] = Object.fromEntries(TIERS.map((t) => [t, { model: exactIntent('m-mid') }]));
+  }
+  delete cells.ralph;
+  assert.throws(() => expandPlan({ mode: 'matrix', cells }), /six canonical persona keys/);
+
+  const short = Object.fromEntries(TIERS.slice(0, 4).map((t) => [t, { model: exactIntent('m-mid') }]));
+  assert.throws(() => expandPlan({ mode: 'per_tier', tiers: short }), /five canonical tier keys/);
+});
+
+test('expansion rejects vivaldi as a matrix cell', () => {
+  const cells = {};
+  for (const persona of PERSONAS) {
+    cells[persona] = Object.fromEntries(TIERS.map((t) => [t, { model: exactIntent('m-mid') }]));
+  }
+  cells.vivaldi = Object.fromEntries(TIERS.map((t) => [t, { model: exactIntent('m-mid') }]));
+  assert.throws(() => expandPlan({ mode: 'matrix', cells }), /six canonical persona keys/);
+});
+
+test('expansion carries the session forward for the next gate', () => {
+  const parent = catalog(['m-parent'], 'codex-app');
+  const session = expandPlan(
+    { mode: 'default_all', model: exactIntent('m-top') },
+    { parent_catalog: parent, advisory: { vivaldi: {} } }
+  );
+
+  assert.equal(session.harness, 'codex-app');
+  assert.deepEqual(session.parent_catalog, parent);
+  assert.deepEqual(session.advisory, { vivaldi: {} });
+});
+
+test('expand-selections runs as a CLI gate emitting one JSON object', () => {
+  const requestPath = writeRequest({
+    harness: 'codex-app',
+    catalog: catalog(['m-top'], 'codex-app'),
+    plan: { mode: 'default_all', model: exactIntent('m-top'), reasoning_effort: 'high' },
+  });
+  const result = runResolver(['expand-selections', '--input', requestPath]);
+
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 1);
+  assertCompleteMatrix(JSON.parse(lines[0]).selections);
+});
+
+// ---------------------------------------------------------------------------
+// Probe bounds across the widened matrix
+// ---------------------------------------------------------------------------
+
+function matrixSelections(perPersona) {
+  const out = {};
+  for (const persona of PERSONAS) {
+    const [model, effort] = perPersona[persona] ?? perPersona.default;
+    out[persona] = Object.fromEntries(TIERS.map((tier) => [tier, exactSelection(model, effort, 'auto')]));
+  }
+  return out;
+}
+
+test('thirty identical cells still cost exactly one probe', () => {
+  const plan = verificationPlan({
+    harness: 'codex-app',
+    catalog: catalog(['m-top'], 'codex-app'),
+    selections: matrixSelections({ default: ['m-top', 'high'] }),
+  });
+
+  assert.equal(plan.verification_targets.length, 1);
+  assert.deepEqual(plan.verification_targets[0], expectedTarget('m-top', 'high'));
+});
+
+test('three role lanes cost three probes, not thirty', () => {
+  const plan = verificationPlan({
+    harness: 'codex-app',
+    catalog: catalog(['m-top', 'm-mid', 'm-cheap'], 'codex-app'),
+    selections: matrixSelections({
+      einstein: ['m-top', 'ultra'],
+      peter: ['m-top', 'ultra'],
+      linus: ['m-cheap', 'low'],
+      ralph: ['m-cheap', 'low'],
+      cobalt: ['m-mid', 'high'],
+      sentinel: ['m-mid', 'high'],
+    }),
+  });
+
+  assert.equal(plan.verification_targets.length, 3);
+});
+
+test('thirty distinct tuples are the worst case and are not capped', () => {
+  const models = ['m-a', 'm-b', 'm-c', 'm-d', 'm-e', 'm-f'];
+  const efforts = ['low', 'medium', 'high', 'xhigh', 'ultra'];
+  const selections = {};
+  PERSONAS.forEach((persona, pi) => {
+    selections[persona] = Object.fromEntries(
+      TIERS.map((tier, ti) => [tier, exactSelection(models[pi], efforts[ti], 'auto')])
+    );
+  });
+
+  const plan = verificationPlan({
+    harness: 'codex-app',
+    catalog: catalog(models, 'codex-app'),
+    selections,
+  });
+
+  assert.equal(plan.verification_targets.length, 30, 'the engine must not silently cap probe count');
+});
+
+test('a matrix plan produces persona-major assignments and settings', () => {
+  const plan = verificationPlan({
+    harness: 'codex-app',
+    catalog: catalog(['m-top', 'm-cheap'], 'codex-app'),
+    selections: matrixSelections({ default: ['m-cheap', 'low'], einstein: ['m-top', 'ultra'] }),
+  });
+
+  assert.deepEqual(Object.keys(plan.assignments), PERSONAS);
+  assert.equal(plan.assignments.einstein.complex, 'm-top');
+  assert.equal(plan.assignments.linus.complex, 'm-cheap');
+  assert.equal(plan.dispatch_settings.einstein.complex.reasoning_effort, 'ultra');
+  assert.equal(plan.dispatch_settings.linus.complex.reasoning_effort, 'low');
+});
+
+test('an unresolved cell names its persona and tier', () => {
+  const selections = matrixSelections({ default: ['m-top', 'high'] });
+  selections.cobalt.standard_ambiguous = { reasoning_effort: 'high', context_tier: 'auto' };
+
+  assert.throws(
+    () => verificationPlan({
+      harness: 'codex-app',
+      catalog: catalog(['m-top'], 'codex-app'),
+      selections,
+    }),
+    /selection for cobalt\.standard_ambiguous is unresolved/
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Advisory pass-through
+// ---------------------------------------------------------------------------
+
+function advisoryRow(candidate, effort) {
+  return {
+    vivaldi: Object.fromEntries(TIERS.map((tier) => [tier, {
+      model: exactIntent(candidate),
+      reasoning_effort: effort,
+    }])),
+  };
+}
+
+function buildWithAdvisory(extra) {
+  const selections = matrixSelections({ default: ['m-top', 'auto'] });
+  const targets = verificationPlan({
+    harness: 'codex-app',
+    catalog: catalog(['m-top'], 'codex-app'),
+    selections,
+  }).verification_targets;
+  const probes = {};
+  for (const target of targets) probes[target.id] = successfulProbe(target);
+  return buildResolvedProfile({
+    harness: 'codex-app',
+    catalog: catalog(['m-top'], 'codex-app'),
+    selections,
+    probes,
+    ...extra,
+  });
+}
+
+test('an advisory row lands in the profile without a probe or a model check', () => {
+  const profile = buildWithAdvisory({
+    parent_catalog: catalog(['m-parent'], 'codex-app'),
+    advisory: advisoryRow('m-parent', 'ultra'),
+  });
+
+  assert.deepEqual(profile.advisory.vivaldi.complex, { model: 'm-parent', reasoning_effort: 'ultra' });
+  // The parent model is never dispatched, so it must never be recorded as checked.
+  assert.ok(!Object.hasOwn(profile.model_checks, 'm-parent'));
+  assert.deepEqual(Object.keys(profile.model_checks), ['m-top']);
+});
+
+test('an omitted advisory leaves the field off entirely', () => {
+  const profile = buildWithAdvisory({});
+  assert.ok(!Object.hasOwn(profile, 'advisory'));
+});
+
+test('an advisory resolves against the parent catalog, not the spawn catalog', () => {
+  // The spawn set is strictly smaller; resolving a parent model against it would
+  // wrongly reject a legitimate recommendation.
+  assert.throws(
+    () => buildWithAdvisory({ advisory: advisoryRow('m-parent', 'high') }),
+    /requires parent_catalog/
+  );
+  assert.throws(
+    () => buildWithAdvisory({
+      parent_catalog: catalog(['m-other'], 'codex-app'),
+      advisory: advisoryRow('m-parent', 'high'),
+    }),
+    /not in the active harness parent catalog/
+  );
+});
+
+test('advisory reasoning effort is capability-gated', () => {
+  assert.throws(
+    () => buildWithAdvisory({
+      parent_catalog: catalog(['m-parent'], 'codex-app'),
+      advisory: advisoryRow('m-parent', 'nonsense'),
+    }),
+    /reasoning_effort must be one of/
+  );
+});
+
+test('advisory rejects a non-canonical role', () => {
+  assert.throws(
+    () => buildWithAdvisory({
+      parent_catalog: catalog(['m-parent'], 'codex-app'),
+      advisory: { ...advisoryRow('m-parent', 'high'), linus: {} },
+    }),
+    /unknown role/
   );
 });

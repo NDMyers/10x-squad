@@ -3,7 +3,7 @@
 'use strict';
 
 const packageJson = require('../package.json');
-const { installTenXSquad } = require('../lib/installer');
+const { SKILL_DISCOVERY_ROOTS, installTenXSquad } = require('../lib/installer');
 
 function printHelp() {
   console.log(`Usage: 10x-squad <command> [options]
@@ -16,6 +16,30 @@ Options:
   --harness <name>        copilot | codex | all (default: all)
   -h, --help              Show help
   -v, --version           Show version`);
+}
+
+// A shadowed skill reads on disk as correct while the harness runs an older
+// copy, and reloading never helps because nothing is cached. Name the stale
+// paths explicitly so the symptom is not mistaken for a caching problem.
+function printShadowWarning(shadowed = []) {
+  if (shadowed.length === 0) {
+    return;
+  }
+
+  console.error('');
+  console.error('warning: skills installed in multiple discovery roots at different revisions');
+
+  for (const { skillName, copies } of shadowed) {
+    console.error(`  ${skillName}`);
+    for (const { root, current } of copies) {
+      console.error(`    ${root}/${skillName}  ${current ? '(current)' : '(STALE)'}`);
+    }
+  }
+
+  console.error('');
+  console.error(`Copilot loads skills from all of ${SKILL_DISCOVERY_ROOTS.join(', ')}, so a stale`);
+  console.error('copy can shadow the current one and reloading will not clear it.');
+  console.error('Fix: run `10x-squad install` with no --harness flag to sync every tree.');
 }
 
 function parseInstallOptions(args) {
@@ -84,6 +108,7 @@ function main(argv) {
 
     const result = installTenXSquad({ directory: options.directory, harness: options.harness });
     console.log(`Installed 10x Squad assets (${result.harnesses.join(', ')}) into ${result.targetDirectory}`);
+    printShadowWarning(result.shadowed);
     return 0;
   } catch (err) {
     console.error(`10x-squad install failed: ${err.message}`);
