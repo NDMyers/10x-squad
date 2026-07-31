@@ -79,15 +79,15 @@ Before finalizing, verify your own review:
 
 ### Independent Lint Verification (MANDATORY)
 
-Before reviewing code, run lint independently against the **latest applicable commit** (the most recent commit on the working branch, not just staged changes):
+Before reviewing code, run lint independently against pending working-tree changes before commit:
 
 ```
-ruby <workspace-root>/rubocop_changed_lines HEAD
+cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines
 ```
 
-If working on an uncommitted change, ensure the latest commit is targeted. If the branch has multiple commits, use the branch tip.
+After committing, confirm that commit with `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines <SHA>`.
 
-**Worktree note**: The `rubocop_changed_lines` script lives at the workspace root. When working in a git worktree, run it from the worktree directory so `git diff-tree` resolves correctly.
+**Worktree note**: The `rubocop_changed_lines` script lives at the workspace root. Run it from the target Rails repository so Git resolves that repository's working tree.
 
 Report the result in the Lint Check section. Do not trust the builder's claim that lint passes — verify it yourself. **This step is non-negotiable — a review without lint verification is incomplete.**
 
