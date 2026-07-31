@@ -348,6 +348,93 @@ test('a clean install prints no shadow warning', () => {
   assert.doesNotMatch(result.stderr, /discovery roots/);
 });
 
+test('uninstall removes every installed asset', () => {
+  const workspace = makeTempDir();
+  runCli(['install'], workspace);
+
+  runCli(['uninstall'], workspace);
+
+  for (const asset of assets) {
+    assert.equal(fs.existsSync(path.join(workspace, asset.target)), false, asset.target);
+  }
+});
+
+test('uninstall preserves .10x-squad/model-routing.json', () => {
+  const workspace = makeTempDir();
+  const configFile = path.join(workspace, '.10x-squad', 'model-routing.json');
+  fs.mkdirSync(path.dirname(configFile), { recursive: true });
+  fs.writeFileSync(configFile, '{"sentinel":"preserve-me"}\n');
+
+  runCli(['install'], workspace);
+  runCli(['uninstall'], workspace);
+
+  // Routing configuration is user data, never part of the asset manifest.
+  assert.equal(fs.readFileSync(configFile, 'utf8'), '{"sentinel":"preserve-me"}\n');
+});
+
+test('uninstall leaves unrelated agents and skills in shared roots alone', () => {
+  const workspace = makeTempDir();
+  const foreignSkill = path.join(workspace, '.github', 'skills', 'other-bundle-skill', 'SKILL.md');
+  const foreignAgent = path.join(workspace, '.github', 'agents', 'other.agent.md');
+
+  runCli(['install'], workspace);
+  fs.mkdirSync(path.dirname(foreignSkill), { recursive: true });
+  fs.writeFileSync(foreignSkill, 'keep me\n');
+  fs.writeFileSync(foreignAgent, 'keep me\n');
+
+  runCli(['uninstall'], workspace);
+
+  assert.equal(fs.readFileSync(foreignSkill, 'utf8'), 'keep me\n');
+  assert.equal(fs.readFileSync(foreignAgent, 'utf8'), 'keep me\n');
+  // A shared root still holding another bundle's files must survive.
+  assert.equal(fs.existsSync(path.join(workspace, '.github', 'skills')), true);
+});
+
+test('uninstall prunes roots it emptied', () => {
+  const workspace = makeTempDir();
+  runCli(['install'], workspace);
+
+  runCli(['uninstall'], workspace);
+
+  assert.equal(fs.existsSync(path.join(workspace, '.github')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+});
+
+test('uninstall --harness removes only that harness tree', () => {
+  const workspace = makeTempDir();
+  runCli(['install'], workspace);
+
+  runCli(['uninstall', '--harness', 'codex'], workspace);
+
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+  assertInstalledAssets(workspace, harnessAssets.copilot);
+});
+
+test('uninstall is idempotent and succeeds when nothing is installed', () => {
+  const workspace = makeTempDir();
+
+  const first = runCli(['uninstall'], workspace);
+  assert.match(first.stdout, /Removed 0 10x Squad asset\(s\)/);
+
+  runCli(['install'], workspace);
+  runCli(['uninstall'], workspace);
+  runCli(['uninstall'], workspace);
+});
+
+test('uninstall rejects an unknown harness without removing anything', () => {
+  const workspace = makeTempDir();
+  runCli(['install'], workspace);
+
+  const result = spawnSync(process.execPath, [cliPath, 'uninstall', '--harness', 'nonsense'], {
+    cwd: workspace,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unknown harness: nonsense/);
+  assertInstalledAssets(workspace);
+});
+
 test('package remains independent from @corpay/ai-dlc-toolkit', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
 
