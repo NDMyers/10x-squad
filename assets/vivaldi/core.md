@@ -180,9 +180,9 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 1. Send spec + relevant file contents to Linus.
 2. Verify changes were applied.
-3. **Lint self-check:** If `.rb` files were changed, Linus runs `ruby <workspace-root>/rubocop_changed_lines HEAD` from the working tree and fixes any offenses found. Max 2 self-fix cycles. This is part of BUILD — Linus does not report done until lint is clean or cycles are exhausted.
+3. **Lint self-check:** If `.rb` files were changed, Linus runs `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` before commit and fixes any offenses found. Max 2 self-fix cycles. This is part of BUILD — Linus does not report done until lint is clean or cycles are exhausted.
 
-**Note:** The `rubocop_changed_lines` script lives at the workspace root (`/rubocop_changed_lines`). When working in a git worktree, run it from the worktree directory so `git diff-tree` resolves correctly.
+**Note:** The `rubocop_changed_lines` script lives at the workspace root (`/rubocop_changed_lines`). Run it from the target Rails repository so Git resolves that repository's working tree. After committing, confirm that commit with `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines <SHA>`.
 
 ---
 
@@ -195,7 +195,7 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 **Sentinel engagement:** If tier is **Complex** OR the diff touches a **sensitive surface** (Peter's `## Sensitive Surface` section is present, or Vivaldi detects auth/payments/migrations/external-input/PII in the diff), **also load the `10x-sentinel-review` skill** and run Sentinel **in parallel with Cobalt** in a separate context. Cobalt and Sentinel own disjoint domains — Cobalt never raises security findings when Sentinel is engaged, and Sentinel never raises style/logic findings.
 
 1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section.
-2. **Lint verification:** If `.rb` files were changed, Cobalt independently runs `ruby <workspace-root>/rubocop_changed_lines HEAD` from the working tree. Any remaining offenses are included as findings (MINOR for style, MAJOR for Lint/ cops). This catches anything Linus missed.
+2. **Lint verification:** If `.rb` files were changed, Cobalt independently runs `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` before commit. Any remaining offenses are included as findings (MINOR for style, MAJOR for Lint/ cops). This catches anything Linus missed.
 3. **Combine verdicts.** The change proceeds only when **both** engaged reviewers reach APPROVE (APPROVE-with-MINOR-only is acceptable). Route on the combined verdict:
    - **Both APPROVE** → Step 6 (or deliver if Lite).
    - **Any REQUEST_CHANGES** → Merge CRITICAL/MAJOR items from both reviewers → focused revision to Linus. Max 2 cycles. Re-run the relevant reviewer(s) after the fix.
