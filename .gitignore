@@ -5,6 +5,7 @@ node_modules/
 
 # Eval harness run artifacts
 evals/results.csv
+evals/runs/
 evals/tasks/**/last-stderr.log
 evals/tasks/smoke-hello/workspace/*
 !evals/tasks/smoke-hello/workspace/.gitkeep

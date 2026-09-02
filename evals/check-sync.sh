@@ -12,15 +12,18 @@
 #
 # Canonical layout: this repo checked out inside the deploy workspace
 # (<workspace>/10x-squad). Set SQUAD_ROOT if your workspace lives elsewhere.
+MODE="${1:-all}"
+case "$MODE" in
+  all) ;;
+  --source-only) ;;
+  *) printf 'usage: %s [--source-only]\n' "$0" >&2; exit 2 ;;
+esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
 ROOT="${SQUAD_ROOT:-$(dirname "$REPO")}"
 LIVE_SKILLS="$ROOT/.github/skills"
 LIVE_AGENT="$ROOT/.github/agents/10x-squad.agent.md"
-LIVE_CODEX_SKILLS="$ROOT/.agents/skills"
-LIVE_CODEX_VIVALDI="$LIVE_CODEX_SKILLS/10x-squad-vivaldi/SKILL.md"
-ASSETS="$REPO/assets"
-INSTALLER="$REPO/lib/installer.js"
 UPSTREAM="$ROOT/corpay-agents/.github"
 CLAUDE_CMDS="${CLAUDE_CMDS:-$HOME/.claude/commands}"
 set -uo pipefail
@@ -34,93 +37,128 @@ ptbad() { printf '  ✗ [PORT]     %s\n' "$*"; port_fail=$((port_fail+1)); }
 sum() { md5 -q "$1" 2>/dev/null || md5sum "$1" 2>/dev/null | awk '{print $1}' || echo MISSING; }
 
 echo "== 1. Source-of-truth invariant: live deploy == installer assets"
-for dir in "$LIVE_SKILLS"/10x-*/; do
-  s="$(basename "$dir")"
-  if [ "$(sum "$dir/SKILL.md")" = "$(sum "$ASSETS/skills/$s/SKILL.md")" ]; then
-    ok "$s: live == assets"
-  else
-    srcbad "$s: live != assets (edit flowed the wrong way, or assets stale)"
-  fi
-done
-# Vivaldi is composed, not copied: assets/vivaldi/{core,dispatch-<harness>} is the
-# source and each harness entrypoint is a build product. Compare against a fresh
-# composition so an edit made in a deployed copy still shows up as drift.
-compose() { node -e 'process.stdout.write(require("'"$REPO"'/lib/compose.js").composeVivaldi(process.argv[1]))' "$1"; }
-composed_sum() { compose "$1" | (md5 -q 2>/dev/null || md5sum 2>/dev/null | awk '{print $1}'); }
+if ! manifest_results=$(node - "$REPO" "$ROOT" <<'NODE'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
-if [ "$(sum "$LIVE_AGENT")" = "$(composed_sum copilot)" ]; then
-  ok "Vivaldi (copilot): live == composed assets"
-else
-  srcbad "Vivaldi (copilot): live != composed assets (installer would ROLL BACK live edits)"
+const [repo, root] = process.argv.slice(2);
+const installer = require(path.join(repo, 'lib', 'installer.js'));
+const digest = (content) => crypto.createHash('sha256').update(content).digest('hex');
+const expectedAssets = installer.assetsFor('all');
+const expectedTargets = new Set(expectedAssets.map((asset) => path.normalize(asset.target)));
+
+for (const asset of expectedAssets) {
+  const expected = asset.contents ? Buffer.from(asset.contents()) : fs.readFileSync(asset.source);
+  const target = path.join(root, asset.target);
+  let state = 'missing';
+  if (fs.existsSync(target)) {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      state = 'not_regular';
+    } else {
+      state = digest(fs.readFileSync(target)) === digest(expected) ? 'current' : 'drifted';
+    }
+  }
+  process.stdout.write(`${asset.target}\t${state}\n`);
+}
+
+function walkFiles(directory) {
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(directory, entry.name);
+    return entry.isDirectory() ? walkFiles(full) : [full];
+  });
+}
+
+const discovered = new Set();
+for (const discoveryRoot of installer.SKILL_DISCOVERY_ROOTS) {
+  const absoluteRoot = path.join(root, discoveryRoot);
+  if (!fs.existsSync(absoluteRoot)) continue;
+  for (const entry of fs.readdirSync(absoluteRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('10x-')) continue;
+    for (const file of walkFiles(path.join(absoluteRoot, entry.name))) {
+      discovered.add(path.relative(root, file));
+    }
+  }
+}
+for (const file of walkFiles(path.join(root, '.10x-squad', 'runtime'))) {
+  discovered.add(path.relative(root, file));
+}
+for (const relative of [...discovered].sort((left, right) => left.localeCompare(right))) {
+  if (!expectedTargets.has(path.normalize(relative))) {
+    process.stdout.write(`${relative}\textra\n`);
+  }
+}
+
+const skillsRoot = path.join(repo, 'assets', 'skills');
+for (const entry of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
+  if (entry.isDirectory() && !installer.skillNames.includes(entry.name)) {
+    process.stdout.write(`assets/skills/${entry.name}\tunmanifested\n`);
+  }
+}
+NODE
+); then
+  srcbad "unable to enumerate installer manifest"
+  manifest_results=""
 fi
+while IFS=$'\t' read -r relative state; do
+  [ -z "$relative" ] && continue
+  case "$state" in
+    current) ok "$relative: live == assets" ;;
+    missing) srcbad "$relative: missing" ;;
+    drifted) srcbad "$relative: live != assets" ;;
+    not_regular) srcbad "$relative: not a regular owned file" ;;
+    extra) srcbad "$relative: extra deployed file" ;;
+    unmanifested) srcbad "$relative: absent from installer manifest" ;;
+  esac
+done <<< "$manifest_results"
 
-echo "== 1b. Codex deployment: live .agents/skills == installer assets"
-if [ -d "$LIVE_CODEX_SKILLS" ]; then
-  for dir in "$LIVE_CODEX_SKILLS"/10x-*/; do
+if [ "$MODE" = "all" ]; then
+  echo "== 3. Upstream distribution (corpay-agents) vs live lineage"
+  for dir in "$LIVE_SKILLS"/10x-*/; do
     s="$(basename "$dir")"
-    [ "$s" = "10x-squad-vivaldi" ] && continue
-    if [ "$(sum "$dir/SKILL.md")" = "$(sum "$ASSETS/skills/$s/SKILL.md")" ]; then
-      ok "$s: codex live == assets"
+    m_up="$(sum "$UPSTREAM/skills/$s/SKILL.md")"
+    if [ "$m_up" = "$(sum "$dir/SKILL.md")" ]; then
+      ok "$s: upstream current"
+    elif [ "$m_up" = "MISSING" ]; then
+      upbad "$s: absent upstream"
     else
-      srcbad "$s: codex live != assets (edit flowed the wrong way, or assets stale)"
+      upbad "$s: upstream lags live"
     fi
   done
-  if [ "$(sum "$LIVE_CODEX_VIVALDI")" = "$(composed_sum codex)" ]; then
-    ok "Vivaldi (codex): live == composed assets"
+  if [ "$(sum "$UPSTREAM/agents/10x-squad.agent.md")" = "$(sum "$LIVE_AGENT")" ]; then
+    ok "Vivaldi: upstream current"
   else
-    srcbad "Vivaldi (codex): live != composed assets"
+    upbad "Vivaldi: upstream lags live"
   fi
-else
-  echo "  (no Codex deployment at $LIVE_CODEX_SKILLS — skipping)"
+
+  echo "== 4. Claude Code port: do referenced skill paths resolve?"
+  refs=$(grep -hoE '~?/?\.?[A-Za-z0-9_./~-]*skills/10x[a-z-]*' "$CLAUDE_CMDS"/10x*.md 2>/dev/null | sed 's|.*skills/|skills/|' | sort -u)
+  if [ -z "$refs" ]; then
+    echo "  (no 10x skill references found in $CLAUDE_CMDS)"
+  else
+    while IFS= read -r r; do
+      name="${r#skills/}"
+      if [ -f "$HOME/.claude/skills/$name/SKILL.md" ]; then
+        ok "~/.claude/skills/$name resolves"
+      else
+        ptbad "~/.claude/skills/$name/SKILL.md missing (referenced by port commands)"
+      fi
+    done <<< "$refs"
+  fi
 fi
 
-echo "== 2. Installer manifest covers every live skill"
-for dir in "$LIVE_SKILLS"/10x-*/; do
-  s="$(basename "$dir")"
-  if grep -q "'$s'" "$INSTALLER" 2>/dev/null; then
-    ok "$s in installer skillNames"
-  else
-    srcbad "$s NOT in installer skillNames (fresh install would omit it)"
-  fi
-done
-
-echo "== 3. Upstream distribution (corpay-agents) vs live lineage"
-for dir in "$LIVE_SKILLS"/10x-*/; do
-  s="$(basename "$dir")"
-  m_up="$(sum "$UPSTREAM/skills/$s/SKILL.md")"
-  if [ "$m_up" = "$(sum "$dir/SKILL.md")" ]; then
-    ok "$s: upstream current"
-  elif [ "$m_up" = "MISSING" ]; then
-    upbad "$s: absent upstream"
-  else
-    upbad "$s: upstream lags live"
-  fi
-done
-if [ "$(sum "$UPSTREAM/agents/10x-squad.agent.md")" = "$(sum "$LIVE_AGENT")" ]; then
-  ok "Vivaldi: upstream current"
-else
-  upbad "Vivaldi: upstream lags live"
-fi
-
-echo "== 4. Claude Code port: do referenced skill paths resolve?"
-refs=$(grep -hoE '~?/?\.?[A-Za-z0-9_./~-]*skills/10x[a-z-]*' "$CLAUDE_CMDS"/10x*.md 2>/dev/null | sed 's|.*skills/|skills/|' | sort -u)
-if [ -z "$refs" ]; then
-  echo "  (no 10x skill references found in $CLAUDE_CMDS)"
-else
-  while IFS= read -r r; do
-    name="${r#skills/}"
-    if [ -f "$HOME/.claude/skills/$name/SKILL.md" ]; then
-      ok "~/.claude/skills/$name resolves"
-    else
-      ptbad "~/.claude/skills/$name/SKILL.md missing (referenced by port commands)"
-    fi
-  done <<< "$refs"
+echo ""
+echo "SOURCE failures:   $src_fail   (must always be 0 — the invariant this repo enforces)"
+if [ "$MODE" = "--source-only" ]; then
+  [ "$src_fail" -eq 0 ] && exit 0
+  exit 1
 fi
 
 total=$((src_fail + up_fail + port_fail))
-echo ""
-echo "SOURCE failures:   $src_fail   (must always be 0 — the invariant this repo enforces)"
 echo "UPSTREAM lag:      $up_fail   (resolve by PR to corpay-agents)"
 echo "PORT dangling:     $port_fail   (resolve via installer Claude target — ladder step 4)"
 echo "TOTAL: $total"
-exit "$total"
+[ "$total" -eq 0 ] && exit 0
+exit 1

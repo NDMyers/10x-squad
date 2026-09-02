@@ -1,8 +1,9 @@
 # 10x-squad
 
-Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator) plus seven
-skills: six personas (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) and
-`10x-squad-configure-tiers` (work-tier model, reasoning, and context routing).
+Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator), seven
+skills, and a dependency-free deterministic control runtime. The skills include six personas
+(Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) plus `10x-squad-configure-tiers` for work-tier
+model, reasoning, and context routing.
 
 Ships to **GitHub Copilot** and **Codex** (Codex CLI and the ChatGPT desktop app).
 
@@ -18,7 +19,15 @@ node bin/10x-squad.js install --directory <workspace-root>
 ```
 
 ```
-Usage: 10x-squad install [options]
+Usage: 10x-squad <command> [options]
+
+Commands:
+  install
+  uninstall
+  validate-handoff
+  validate-project
+  transition-project
+  generate-registry
 
   -d, --directory <path>   Target project directory (default: cwd)
   --harness <name>         copilot | codex | all (default: all)
@@ -43,7 +52,9 @@ the routing surface key described under [Model routing](#model-routing); don't c
 
 Each skill installs as a complete package — `SKILL.md` plus its nested `scripts/`, `references/`,
 and `agents/` directories. Vivaldi is not copied but *composed* per harness from `assets/vivaldi/`,
-so both entrypoints stay derived from one body.
+so both entrypoints stay derived from one body. Every install also writes the shared
+`.10x-squad/runtime/` control scripts. A harness-specific uninstall preserves this runtime; an
+all-harness uninstall removes it while preserving `.10x-squad/model-routing.json`.
 
 ### Verify the install
 
@@ -159,14 +170,30 @@ harness evidence: [`docs/model-routing-harness-spike.md`](docs/model-routing-har
 assets/vivaldi/         Vivaldi's single source: core.md (harness-agnostic body)
                         + dispatch-<harness>.md + frontmatter-<harness>.yml
 assets/skills/10x-*/    seven skills, installed as complete packages
+assets/runtime/         installed trace, state, transition, and registry controls
 lib/compose.js          renders each harness entrypoint from assets/vivaldi/
 lib/installer.js        per-harness asset manifest + recursive copy logic
 bin/10x-squad.js        CLI: 10x-squad install [-d <dir>] [--harness <name>]
 test/                   node --test suites (npm test runs full discovery)
-evals/                  deployment parity check + headless eval harness
+evals/                  deployment parity check + Copilot/Codex JSONL eval harness
 docs/                   harness spikes, model-tier operator guide
 docs/review/            squad review, architecture, eval plan, learning notes
 ```
+
+## Deterministic controls
+
+Installed Vivaldi entrypoints invoke `.10x-squad/runtime/control.js` for invariants that do not
+require model judgment:
+
+```
+node .10x-squad/runtime/control.js validate-handoff --spec <spec.md> [--brief <brief.md>] [--build <build.md>]
+node .10x-squad/runtime/control.js validate-project --project <project-directory>
+node .10x-squad/runtime/control.js transition-project --project <project-directory> --state <next-state.json> --expected-updated-at <current-timestamp>
+node .10x-squad/runtime/control.js generate-registry --projects-root <projects-directory> --output <PROJECTS.md>
+```
+
+The project registry supports gradual migration: directories without `project.json` remain visible
+as `UNMANAGED`, but must receive validated state before the squad resumes them.
 
 ## Development
 
@@ -174,13 +201,24 @@ docs/review/            squad review, architecture, eval plan, learning notes
 npm test                                  # full suite
 W=/tmp/sync && rm -rf $W && mkdir -p $W
 node bin/10x-squad.js install -d $W
-SQUAD_ROOT=$W bash evals/check-sync.sh    # SOURCE failures must be 0
+SQUAD_ROOT=$W bash evals/check-sync.sh --source-only
+DRY_RUN=1 REPS=1 EVAL_HARNESS=copilot-cli bash evals/run.sh smoke
 ```
 
 `check-sync.sh` recomposes Vivaldi and compares it against the deployed copy. Its exit code is the
 total failure count, split into three categories with different owners: **SOURCE** (the invariant
 below — must always be 0), **UPSTREAM** (corpay-agents copies lagging), and **PORT** (Claude Code
-command stubs).
+command stubs). `--source-only` skips optional legacy distribution checks and exits on SOURCE
+failures alone, making it suitable for CI. Without that flag the complete historical audit remains
+available.
+
+Real eval runs require `EVAL_HARNESS=copilot-cli|codex-cli`, an exact target-surface `EVAL_MODEL`,
+and `EVAL_ROUTING_CONFIG` pointing to a `model-routing.json` containing that surface's persona
+profiles. Each run installs the selected harness and routing config into its isolated fixture,
+preserves uniquely addressed raw JSONL events under `evals/runs/`, and appends only observable
+metrics to `evals/results.csv`; unavailable token or cost values remain blank rather than being
+reported as zero. One eval process owns a results CSV at a time; use separate `RESULTS_CSV` paths
+for concurrent suites.
 
 ## The source-of-truth rule
 

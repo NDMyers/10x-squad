@@ -56,6 +56,42 @@ test('each entrypoint composes in exactly one Model Routing section', () => {
   }
 });
 
+test('shared trace gates invoke the installed deterministic runtime', () => {
+  const core = fs.readFileSync(path.join(vivaldiRoot, 'core.md'), 'utf8');
+
+  assert.match(core, /node \.10x-squad\/runtime\/control\.js validate-handoff/);
+  assert.match(core, /gate-plan\.json/);
+  assert.match(core, /gate-build\.json/);
+  assert.match(core, /nonzero exit/i);
+  assert.doesNotMatch(core, /Vivaldi runs a \*\*mechanical\*\* check — string-match/);
+});
+
+test('project state is validated and the registry is generated rather than manually edited', () => {
+  const core = fs.readFileSync(path.join(vivaldiRoot, 'core.md'), 'utf8');
+
+  assert.match(core, /project\.json/);
+  assert.match(core, /control\.js validate-project/);
+  assert.match(core, /control\.js transition-project/);
+  assert.match(core, /control\.js generate-registry/);
+  assert.doesNotMatch(core, /Append a row to `10x-squad-artifacts\/PROJECTS\.md`/);
+  assert.doesNotMatch(core, /Update `PROJECTS\.md` status column/);
+});
+
+test('Vivaldi state transitions follow the runtime phase graph', () => {
+  const core = fs.readFileSync(path.join(vivaldiRoot, 'core.md'), 'utf8');
+
+  assert.match(core, /INTAKE.*to PLAN before dispatching Peter/is);
+  assert.match(core, /PLAN.*to BUILD/is);
+  assert.match(core, /BUILD.*to REVIEW before dispatching reviewers/is);
+  assert.match(core, /REVIEW.*to TEST or DELIVER/is);
+  assert.match(core, /TEST.*to DELIVER/is);
+  const saveSpec = core.indexOf('save spec to `projects/{task-slug}/spec.md`');
+  const runPlanGate = core.indexOf('run the PLAN trace gate');
+  assert.notEqual(saveSpec, -1, 'spec persistence instruction must exist');
+  assert.notEqual(runPlanGate, -1, 'PLAN trace gate instruction must exist');
+  assert.ok(saveSpec < runPlanGate, 'spec must exist before PLAN validation');
+});
+
 test('no entrypoint pins a parent model', () => {
   for (const harness of Object.keys(harnessEntrypoints)) {
     const { frontmatter } = frontmatterAndBody(composeVivaldi(harness));
