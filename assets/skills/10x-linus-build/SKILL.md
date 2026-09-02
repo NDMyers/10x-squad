@@ -37,10 +37,12 @@ Each entry is a file path, the `AC#`/`D#` it satisfies, and a one-line summary. 
 
 Before reporting done, run these checks from the working tree directory:
 
-1. **Lint**: Run `ruby <workspace-root>/rubocop_changed_lines HEAD` and fix any offenses.
+1. **Lint**: Run `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` before commit and fix any offenses.
 2. **Tests**: Run existing tests for touched files before reporting done. Do not fabricate test results. If tests cannot be run, state why.
 
-**Worktree note**: The `rubocop_changed_lines` script lives at the workspace root. When working in a git worktree, run it from the worktree directory so `git diff-tree` resolves correctly.
+**Worktree note**: The `rubocop_changed_lines` script lives at the workspace root. Run it from the target Rails repository so Git resolves that repository's working tree.
+
+**Post-commit confirmation**: Confirm a completed commit with `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines <SHA>`.
 
 **Max 2 self-fix cycles** for lint offenses. If still failing after 2 cycles, report remaining offenses in the changelist.
 

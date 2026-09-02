@@ -161,6 +161,39 @@ test('rerunning install replaces owned assets and preserves unrelated workspace 
   assert.equal(fs.readFileSync(unrelatedSkill, 'utf8'), 'keep skill\n');
 });
 
+test('install rejects a symlinked owned target without modifying its external destination', () => {
+  const workspace = makeTempDir();
+  const external = path.join(makeTempDir(), 'external-control.js');
+  fs.writeFileSync(external, 'do not overwrite\n');
+  const target = path.join(workspace, '.10x-squad', 'runtime', 'control.js');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.symlinkSync(external, target);
+
+  const result = spawnSync(process.execPath, [cliPath, 'install', '--directory', workspace], {
+    cwd: packageRoot,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /symbolic link/i);
+  assert.equal(fs.readFileSync(external, 'utf8'), 'do not overwrite\n');
+});
+
+test('install rejects a symlinked parent directory without writing outside the workspace', () => {
+  const workspace = makeTempDir();
+  const external = makeTempDir();
+  fs.symlinkSync(external, path.join(workspace, '.github'));
+
+  const result = spawnSync(process.execPath, [cliPath, 'install', '--directory', workspace], {
+    cwd: packageRoot,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /symbolic link/i);
+  assert.deepEqual(fs.readdirSync(external), []);
+});
+
 test('install does not create or modify CAT installation files', () => {
   const workspace = makeTempDir();
   const catConfig = path.join(workspace, '_cat', 'config.yaml');
@@ -408,6 +441,16 @@ test('uninstall --harness removes only that harness tree', () => {
 
   assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
   assertInstalledAssets(workspace, harnessAssets.copilot);
+});
+
+test('targeted uninstall removes the shared runtime when no installed harness remains', () => {
+  const workspace = makeTempDir();
+  runCli(['install', '--harness', 'copilot'], workspace);
+
+  runCli(['uninstall', '--harness', 'copilot'], workspace);
+
+  assert.equal(fs.existsSync(path.join(workspace, '.github')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.10x-squad', 'runtime')), false);
 });
 
 test('uninstall is idempotent and succeeds when nothing is installed', () => {
