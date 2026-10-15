@@ -6,7 +6,19 @@ const packageJson = require('../package.json');
 const { SKILL_DISCOVERY_ROOTS, installTenXSquad, uninstallTenXSquad } = require('../lib/installer');
 const { main: runControl } = require('../assets/runtime/control');
 
-const CONTROL_COMMANDS = ['validate-handoff', 'validate-project', 'transition-project', 'generate-registry'];
+const CONTROL_COMMANDS = [
+  'validate-handoff',
+  'validate-review',
+  'verify-build',
+  'partition-plan',
+  'advance-phase',
+  'validate-project',
+  'transition-project',
+  'generate-registry',
+  'render-board',
+  'serve-board',
+  'toggle-ui',
+];
 
 function printHelp() {
   console.log(`Usage: 10x-squad <command> [options]
@@ -15,18 +27,32 @@ Commands:
   install                 Install 10x Squad workspace customization assets
   uninstall               Remove the assets install writes, leaving
                           .10x-squad/model-routing.json untouched
-  validate-handoff        Validate D#/AC# traceability across Markdown artifacts
+  validate-handoff        Validate D#/AC#/K# traceability across Markdown artifacts
+  validate-review         Deterministically filter review findings against spec contract
+  verify-build            Verify build File Plan scope and syntax/lint checks pre-review
+  partition-plan          Analyze File Plan cohesion for single vs parallel Builder batches
+  advance-phase           Composite runner: run gate, advance project.json, update registry,
+                          and resolve next persona model profiles in one call
   validate-project        Validate one project.json and its artifact pointers
   transition-project      Atomically apply an allowed project state transition
   generate-registry       Generate PROJECTS.md from validated project states
+  render-board            Render live ASCII, ANSI, HTML, or Markdown/Mermaid workflow board
+  serve-board             Start local fs.watch + SSE live dashboard server for VS Code / Agents
+  toggle-ui               Enable, disable, toggle, or inspect automatic Workflow Monitor UI
 
 Options:
   -d, --directory <path>  Target project directory
   --harness <name>        copilot | codex | all (default: all)
   --brief <path>          Optional deliberation brief for validate-handoff
-  --spec <path>           Technical spec for validate-handoff
+  --spec <path>           Technical spec for validate-handoff / validate-review
   --build <path>          Optional build changelist for validate-handoff
-  --project <path>        Project directory for state validation/transition
+  --review <path>         Review artifact for validate-review
+  --sentinel-review <path>
+                          Optional Sentinel review artifact for validate-review
+  --previous-review <path>
+                          Optional prior-cycle review artifact for validate-review
+  --project <path>        Project directory for state validation/transition/render-board
+  --format <name>         Board format: ascii | ansi | markdown | json
   --state <path>          Proposed project.json for transition-project
   --expected-updated-at <timestamp>
                           Current project.json version for transition-project
