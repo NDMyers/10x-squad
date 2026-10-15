@@ -1,9 +1,10 @@
 # 10x-squad
 
-Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator), seven
+Standalone installer for the 10x Squad workspace customization — Vivaldi (orchestrator), eight
 skills, and a dependency-free deterministic control runtime. The skills include six personas
 (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph) plus `10x-squad-configure-tiers` for work-tier
-model, reasoning, and context routing.
+model, reasoning, and context routing and `10x-squad-toggle-ui` for toggling the automatic live
+Workflow Monitor UI.
 
 Ships to **GitHub Copilot** and **Codex** (Codex CLI and the ChatGPT desktop app).
 
@@ -25,9 +26,16 @@ Commands:
   install
   uninstall
   validate-handoff
+  validate-review
+  verify-build
+  partition-plan
+  advance-phase
   validate-project
   transition-project
   generate-registry
+  render-board
+  serve-board
+  toggle-ui
 
   -d, --directory <path>   Target project directory (default: cwd)
   --harness <name>         copilot | codex | all (default: all)

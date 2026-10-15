@@ -1,0 +1,4 @@
+interface:
+  display_name: "Toggle 10x Squad Workflow Monitor UI"
+  short_description: "Enable or disable automatic live workflow visualization"
+  default_prompt: "Use $10x-squad-toggle-ui to toggle or configure the live 10x Squad Workflow Monitor UI."

@@ -56,8 +56,9 @@ On first invocation, briefly introduce yourself and the squad (2–3 sentences),
 The squad maintains an unbroken decision chain via trace IDs:
 
 - **Einstein** assigns `D1..Dn` to every decision/assumption in his brief (Decision Table).
-- **Peter** must **consume or explicitly defer** every `D#`, and assigns `AC1..ACn` to acceptance criteria. Each AC tags its source decision: `(AC1 ← D2)`.
-- **Linus** cites the `AC#` (and `D#` where relevant) each changelist entry satisfies.
+- **Peter** must **consume or explicitly defer** every `D#`, assigns `AC1..ACn` to acceptance criteria, and compiles negative/security invariants into `## Constraints` (`K1..Kn`) whenever applicable. Each AC and K constraint tags its source decision: `(AC1 ← D2)`, `(K1 ← D2)`.
+- **Linus** cites the `AC#` and `K#` (plus `D#` where relevant) each changelist entry satisfies.
+- **Cobalt and Sentinel** lock blocking review findings to `AC#`, `K#`, `EC#`, or `DETERMINISTIC_BUG` with falsifiable `Proof:` lines (`file:line` + trigger).
 - **Ralph** cites the `AC#` each test exercises.
 
 For a task with an Einstein brief, pass Peter the exact `brief.md` artifact rather than reconstructing its Decision Table in Vivaldi's payload. This makes INTAKE→PLAN a pointer handoff with no model-transcribed ID list.
@@ -168,6 +169,7 @@ No code, no file plans, no acceptance criteria — those are Peter's domain.
    - Create `CONTEXT.md` with Problem, Status (pipeline step + tier), and Branches sections populated.
    - Create `project.json` with exactly: `schema_version: 1`, slug, title, canonical tier key, `status: "active"`, `phase: "INTAKE"`, ISO `updated_at`, a concrete `next_action`, `unresolved_questions: []`, and current relative artifact pointers including `context: "CONTEXT.md"`.
    - Validate state and regenerate the derived registry using the commands in the Artifacts section.
+   - **Live Workflow Monitor UI (auto-open):** `validate-project`, `transition-project`, and `advance-phase` automatically check the user's UI setting (`~/.config/10x-squad/ui.json` or `.10x-squad/ui.json`, toggled via `/10x-squad-toggle-ui` or `node .10x-squad/runtime/control.js toggle-ui`) and write `10x-squad-artifacts/projects/{task-slug}/dashboard.html` when enabled (`result.ui.enabled === true`). At Step 2 (INTAKE), if `result.ui.enabled` is `true` and `result.ui.dashboard_path` is present, automatically open `file://<dashboard_path>` in the integrated browser (`openBrowserPage`) when available so the user sees the live workflow without running any commands. Subsequent phase transitions automatically refresh `dashboard.html` on disk.
 6. **Resumption:** If this is a known project, validate and read its `project.json` first. Use its phase, status, next action, and current artifact pointers to reconstruct pipeline state; read `CONTEXT.md` only for human-oriented detail. For a legacy project folder without `project.json`, reconstruct one initial state from `CONTEXT.md` and existing artifacts, validate it, then resume; never regenerate or discard historical artifacts. Do not re-triage completed steps.
 
 ---
@@ -211,13 +213,24 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 **Sentinel engagement:** If tier is **Complex** OR the diff touches a **sensitive surface** (Peter's `## Sensitive Surface` section is present, or Vivaldi detects auth/payments/migrations/external-input/PII in the diff), **also load the `10x-sentinel-review` skill** and run Sentinel **in parallel with Cobalt** in a separate context. Cobalt and Sentinel own disjoint domains — Cobalt never raises security findings when Sentinel is engaged, and Sentinel never raises style/logic findings.
 
-1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section.
-2. **Lint verification:** If `.rb` files were changed, Cobalt independently runs `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` before commit. Any remaining offenses are included as findings (MINOR for style, MAJOR for Lint/ cops). This catches anything Linus missed.
-3. **Combine verdicts.** The change proceeds only when **both** engaged reviewers reach APPROVE (APPROVE-with-MINOR-only is acceptable). Route on the combined verdict:
-   - **Both APPROVE** → Step 6 (or deliver if Lite).
-   - **Any REQUEST_CHANGES** → transition validated `project.json` from REVIEW to BUILD, merge CRITICAL/MAJOR items from both reviewers, then route a focused revision to Linus. Max 2 cycles. Re-run the BUILD trace gate and relevant reviewer(s) after the fix.
-   - **Any SPEC_DISPUTE** → transition validated `project.json` from REVIEW to PLAN, then send the amendment prompt to Peter. Max 1 cycle.
-4. **Decision capture (Standard/Complex):** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged). If CRITICAL/MAJOR findings caused implementation changes, append a `## REVIEW — {date}` entry to `decisions.md`. If SPEC_DISPUTE was resolved, append a `## DISPUTE — {date}` entry. Update `CONTEXT.md`, then transition validated `project.json` to TEST or DELIVER with current review pointers.
+1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section. For Standard and Complex tasks, you may dispatch Ralph (Step 6) concurrently in the same parallel verification wave as Cobalt/Sentinel so review and test execution overlap in wall-clock time; keep their context slices strictly separate per the Context Visibility Matrix.
+2. **Lint verification:** Reuse Linus's clean `rubocop_changed_lines` output from Step 4 unless uncommitted working-tree edits exist, in which case Cobalt runs `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` once.
+3. **Deterministic review filtering & verdict routing:** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged), then run the deterministic review gate before acting on any finding:
+
+   ```
+   node .10x-squad/runtime/control.js validate-review \
+      --spec 10x-squad-artifacts/projects/{task-slug}/spec.md \
+      --review 10x-squad-artifacts/projects/{task-slug}/review.md \
+      [--sentinel-review 10x-squad-artifacts/projects/{task-slug}/sentinel-review.md] \
+      [--previous-review 10x-squad-artifacts/projects/{task-slug}/review-cycle1.md] \
+      > 10x-squad-artifacts/projects/{task-slug}/gate-review.json
+   ```
+
+   `validate-review` automatically demotes ungrounded or proof-less `CRITICAL`/`MAJOR` findings to advisory `MINOR` (`demoted_findings`) and computes `effective_verdict`. Route on `effective_verdict`:
+   - **APPROVE** → Step 6 (or deliver if Lite).
+   - **REQUEST_CHANGES** → transition validated `project.json` from REVIEW to BUILD, merge only `verified_findings` (`CRITICAL`/`MAJOR` with contract citation + falsifiable `Proof:`) — plus Ralph's test failures if Ralph ran concurrently in the verification wave — into one focused revision for Linus. Max 2 cycles. On Cycle 2, pass `--previous-review` to lock re-review to Cycle 1's file scope.
+   - **SPEC_DISPUTE** → transition validated `project.json` from REVIEW to PLAN, then send the amendment prompt to Peter. Max 1 cycle.
+4. **Decision capture (Standard/Complex):** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged). If CRITICAL/MAJOR findings caused implementation changes, append a `## REVIEW — {date}` entry to `decisions.md`. If SPEC_DISPUTE was resolved, append a `## DISPUTE — {date}` entry. Update `CONTEXT.md`, then transition validated `project.json` to TEST or DELIVER with current review pointers. You may also render the live workflow and contract-sharpness board at any transition via `node .10x-squad/runtime/control.js render-board --project 10x-squad-artifacts/projects/{task-slug} --format markdown`.
 
 ---
 
@@ -338,6 +351,19 @@ node .10x-squad/runtime/control.js generate-registry \
    --projects-root 10x-squad-artifacts/projects \
    --output 10x-squad-artifacts/PROJECTS.md
 ```
+
+**Fast-path composite phase runner (`advance-phase`):** To eliminate multi-turn orchestration ceremony between phases, you may collapse gate validation (`gate-plan.json`, `gate-build.json` + syntax/scope `verify-build`, or `gate-review.json`), atomic `project.json` transition, `PROJECTS.md` regeneration, `partition-plan` cohesion analysis, and next-persona model resolution into one single call:
+
+```
+node .10x-squad/runtime/control.js advance-phase \
+   --project 10x-squad-artifacts/projects/{task-slug} \
+   --to <PLAN|BUILD|REVIEW|TEST|DELIVER> \
+   [--repo-root "$PWD"] \
+   [--workspace-root "$PWD"] \
+   [--harness <surface>]
+```
+
+When `advance-phase` returns `builder_partition.mode: "parallel_batches"` (`>= 4` files across `>= 2` 100%-disjoint file communities), you may dispatch parallel `Linus` builders on those disjoint file sets; otherwise (`"single_builder"`), dispatch a single `Linus` builder to preserve seam integrity.
 
 `project.json` is the canonical resumability state. It contains the current phase/status, tier, next action, unresolved questions, timestamp, and relative pointers to the artifacts needed now. Keep only current pointers in it; historical phase artifacts remain on disk but are not injected by default.
 
