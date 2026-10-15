@@ -266,6 +266,13 @@ function main(argv) {
     const projects = loadProjectRecords(options['projects-root'], existingRegistry);
     fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true });
     fs.writeFileSync(options.output, generateRegistry(options['projects-root'], existingRegistry));
+    try {
+      for (const entry of fs.readdirSync(options['projects-root'], { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          syncProjectDashboard(path.join(options['projects-root'], entry.name));
+        }
+      }
+    } catch {}
     console.log(JSON.stringify({ ok: true, projects: projects.length, output: options.output }));
     return 0;
   } catch (error) {
