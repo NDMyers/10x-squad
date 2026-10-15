@@ -136,7 +136,11 @@ function main(argv) {
     }
 
     if (command === 'validate-handoff') {
-      const result = runHandoffValidation(parseHandoffOptions(args));
+      const paths = parseHandoffOptions(args);
+      const result = runHandoffValidation(paths);
+      try {
+        syncProjectDashboard(path.dirname(path.resolve(paths.spec)));
+      } catch {}
       console.log(JSON.stringify(result));
       return result.ok ? 0 : 1;
     }
@@ -144,6 +148,9 @@ function main(argv) {
     if (command === 'validate-review') {
       const options = parseNamedPaths(args, ['spec', 'review'], ['sentinel-review', 'previous-review']);
       const result = runReviewValidation(options);
+      try {
+        syncProjectDashboard(path.dirname(path.resolve(options.spec)));
+      } catch {}
       console.log(JSON.stringify(result));
       return result.ok ? 0 : 1;
     }
@@ -156,6 +163,11 @@ function main(argv) {
         repoRoot: options['repo-root'],
         enforceFilePlan: options['enforce-file-plan'] === 'true',
       });
+      try {
+        syncProjectDashboard(path.dirname(path.resolve(options.spec)), {
+          repoRoot: options['repo-root'],
+        });
+      } catch {}
       console.log(JSON.stringify(result));
       return result.ok ? 0 : 1;
     }
