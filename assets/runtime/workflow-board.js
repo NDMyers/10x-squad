@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { extractIds, extractSection, validateHandoff } = require('./handoff-validator');
 const { validateReview } = require('./review-validator');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
@@ -368,70 +369,199 @@ function inspectProjectBoard(projectDirectory, options = {}) {
     .reduce((acc, text) => acc + Buffer.byteLength(text.split(/##\s+Appendix/i)[0], 'utf8'), 0);
   const contextKb = Number(Math.max(0.4, headerBytes / 1024).toFixed(1));
 
-  const totalAgents =
-    (state.tier === 'standard_ambiguous' || state.tier === 'complex' ? 1 : 0) + // einstein
-    1 + // peter
-    Math.max(1, partition.mode === 'parallel_batches' ? partition.batches.length : 1) + // linus
-    1 + // cobalt
-    (sensitiveSurface || state.tier === 'complex' ? 1 : 0) + // sentinel
-    (!['trivial', 'lite'].includes(state.tier) ? 1 : 0); // ralph
-
   const phaseIdx = PHASE_ORDER.indexOf(state.phase);
-  let completedAgents = 0;
-  if (phaseIdx > PHASE_ORDER.indexOf('DELIBERATE') && (state.tier === 'standard_ambiguous' || state.tier === 'complex')) {
-    completedAgents += 1;
+  const isProjectComplete = state.phase === 'DELIVER' || state.status === 'complete';
+  const hasGatePlan = Boolean(readOptionalFile(projectDirectory, artifacts.gate_plan || 'gate-plan.json'));
+  const hasGateBuild = Boolean(readOptionalFile(projectDirectory, artifacts.gate_build || 'gate-build.json'));
+
+  const includeEinstein =
+    Boolean(brief) || ['standard_ambiguous', 'complex'].includes(state.tier) || state.phase === 'DELIBERATE';
+  const includeSentinel = Boolean(sentinelReview) || sensitiveSurface || state.tier === 'complex';
+  const includeRalph = Boolean(tests) || !['trivial', 'lite'].includes(state.tier);
+
+  const einsteinDone = Boolean(brief) || phaseIdx > PHASE_ORDER.indexOf('DELIBERATE') || isProjectComplete;
+  const einsteinActive = !einsteinDone && state.phase === 'DELIBERATE';
+
+  const peterDone =
+    (Boolean(spec) && (phaseIdx > PHASE_ORDER.indexOf('PLAN') || hasGatePlan)) || isProjectComplete;
+  const peterActive = !peterDone && ['INTAKE', 'PLAN'].includes(state.phase);
+
+  const linusDone =
+    (Boolean(build) && (phaseIdx > PHASE_ORDER.indexOf('BUILD') || hasGateBuild)) || isProjectComplete;
+  const linusActive = !linusDone && state.phase === 'BUILD';
+
+  const cobaltDone = Boolean(review) || phaseIdx > PHASE_ORDER.indexOf('REVIEW') || isProjectComplete;
+  const cobaltActive = !cobaltDone && state.phase === 'REVIEW';
+
+  const sentinelHasOutput =
+    Boolean(sentinelReview) ||
+    (Boolean(review) && /##\s+Threat Model|##\s+Surfaces Reviewed/i.test(review));
+  const sentinelDone = sentinelHasOutput || phaseIdx > PHASE_ORDER.indexOf('REVIEW') || isProjectComplete;
+  const sentinelActive = !sentinelDone && state.phase === 'REVIEW';
+
+  const ralphDone = Boolean(tests) || phaseIdx > PHASE_ORDER.indexOf('TEST') || isProjectComplete;
+  const ralphDispatchedInReview = state.phase === 'REVIEW' && /ralph/i.test(state.next_action || '');
+  const ralphActive = !ralphDone && (state.phase === 'TEST' || ralphDispatchedInReview);
+
+  const planAgents = [
+    ...(includeEinstein
+      ? [
+          {
+            id: 'einstein',
+            name: 'Einstein',
+            role: 'Research & Brief',
+            model: profiles.einstein.model,
+            effort: profiles.einstein.reasoning_effort,
+            tier: state.tier,
+            pct: einsteinDone ? 100 : einsteinActive ? 60 : 0,
+            state: einsteinDone ? 'done' : einsteinActive ? 'active' : 'queued',
+            task: brief
+              ? `brief.md · ${dIds.length} decision(s) (${dIds.join(', ') || 'D#'})`
+              : einsteinActive
+                ? 'Running: synthesizing domain context & decision table'
+                : 'Queued for deliberation',
+          },
+        ]
+      : []),
+    {
+      id: 'peter',
+      name: 'Peter',
+      role: 'Spec & Architecture',
+      model: profiles.peter.model,
+      effort: profiles.peter.reasoning_effort,
+      tier: state.tier,
+      pct: peterDone ? 100 : Boolean(spec) ? 85 : peterActive ? 65 : 0,
+      state: peterDone ? 'done' : peterActive ? 'active' : 'queued',
+      task: spec
+        ? `spec.md · ${acIds.length} AC# + ${kIds.length} K# constraints`
+        : peterActive
+          ? 'Running: compiling acceptance criteria & K# constraints'
+          : 'Queued for spec authoring',
+    },
+  ];
+
+  const buildAgents = [
+    {
+      id: 'linus',
+      name: 'Linus',
+      role:
+        partition.mode === 'parallel_batches'
+          ? `Builder (${partition.batches.length} batches)`
+          : 'Builder (Isolated)',
+      model: profiles.linus.model,
+      effort: profiles.linus.reasoning_effort,
+      tier: state.tier,
+      pct: linusDone ? 100 : Boolean(build) ? 85 : linusActive ? 65 : 0,
+      state: linusDone ? 'done' : linusActive ? 'active' : 'queued',
+      task: build
+        ? `build.md · ${builtFilesCount || partition.file_count} file(s) patched & syntax verified`
+        : linusActive
+          ? `Running: implementing ${partition.file_count || 3} planned file(s)`
+          : `Queued for ${partition.file_count || 3} planned file(s)`,
+    },
+  ];
+
+  const verifyAgents = [
+    {
+      id: 'cobalt',
+      name: 'Cobalt',
+      role: 'Code Review',
+      model: profiles.cobalt.model,
+      effort: profiles.cobalt.reasoning_effort,
+      tier: state.tier,
+      pct: cobaltDone ? 100 : cobaltActive ? 70 : 0,
+      state: cobaltDone ? 'done' : cobaltActive ? 'active' : 'queued',
+      task: review
+        ? `review.md · ${sharpness.verified_blocking} blocking, ${sharpness.demoted_blocking} demoted`
+        : cobaltActive
+          ? 'Running: auditing diff against AC# & K# contract'
+          : 'Queued for code review',
+    },
+    ...(includeSentinel
+      ? [
+          {
+            id: 'sentinel',
+            name: 'Sentinel',
+            role: 'Security Audit',
+            model: profiles.sentinel.model,
+            effort: profiles.sentinel.reasoning_effort,
+            tier: state.tier,
+            pct: sentinelDone ? 100 : sentinelActive ? 65 : 0,
+            state: sentinelDone ? 'done' : sentinelActive ? 'active' : 'queued',
+            task: sentinelDone
+              ? sensitiveSurface
+                ? 'Tenant isolation, SQL & money-math surface verified'
+                : 'Security invariant & boundary check complete'
+              : sentinelActive
+                ? 'Running: auditing sensitive surface & threat model'
+                : 'Queued for security audit',
+          },
+        ]
+      : []),
+    ...(includeRalph
+      ? [
+          {
+            id: 'ralph',
+            name: 'Ralph',
+            role: 'Test Suite',
+            model: profiles.ralph.model,
+            effort: profiles.ralph.reasoning_effort,
+            tier: state.tier,
+            pct: ralphDone ? 100 : ralphActive ? 55 : 0,
+            state: ralphDone ? 'done' : ralphActive ? 'active' : 'queued',
+            task: tests
+              ? 'tests.md · AC# regression suite passing'
+              : ralphActive
+                ? 'Running: executing targeted spec & regression suite'
+                : 'Queued for test verification',
+          },
+        ]
+      : []),
+  ];
+
+  function deriveCardStatus(cardAgents, cardPhases) {
+    const base = phaseStatus(state.phase, state.status, cardPhases);
+    const doneCount = cardAgents.filter((a) => a.state === 'done').length;
+    const activeCount = cardAgents.filter((a) => a.state === 'active').length;
+    const avgPct = Math.round(
+      cardAgents.reduce((sum, a) => sum + (Number(a.pct) || 0), 0) / Math.max(1, cardAgents.length)
+    );
+    if (base.state === 'done' || (doneCount === cardAgents.length && cardAgents.length > 0)) {
+      return { state: 'done', pct: 100, badge: '✓ done' };
+    }
+    if (base.state === 'active' || activeCount > 0) {
+      const pct = Math.max(15, Math.min(95, avgPct || base.pct));
+      const badge =
+        cardAgents.length > 1 && doneCount > 0
+          ? `● ${doneCount}/${cardAgents.length} done`
+          : `● ${state.phase.toLowerCase()}`;
+      return { state: 'active', pct, badge };
+    }
+    return { state: 'queued', pct: 0, badge: '· queued' };
   }
-  if (phaseIdx > PHASE_ORDER.indexOf('PLAN')) completedAgents += 1;
-  if (phaseIdx > PHASE_ORDER.indexOf('BUILD')) {
-    completedAgents += Math.max(1, partition.mode === 'parallel_batches' ? partition.batches.length : 1);
-  }
-  if (phaseIdx > PHASE_ORDER.indexOf('REVIEW')) {
-    completedAgents += 1 + (sensitiveSurface || state.tier === 'complex' ? 1 : 0);
-  }
-  if (state.phase === 'DELIVER' || state.status === 'complete') {
-    completedAgents = totalAgents;
-  }
+
+  const allAgents = [...planAgents, ...buildAgents, ...verifyAgents];
+  const totalAgents = allAgents.length;
+  const completedAgents = isProjectComplete
+    ? totalAgents
+    : allAgents.filter((a) => a.state === 'done').length;
+  const activeAgents = isProjectComplete
+    ? 0
+    : allAgents.filter((a) => a.state === 'active').length;
 
   const cards = [
     {
       id: 'plan',
       title: 'Plan',
       color: 'blue',
-      lane: 'Einstein · Peter',
+      lane: includeEinstein ? 'Einstein · Peter' : 'Peter',
       model: profiles.peter.model,
       effort: profiles.peter.reasoning_effort,
       tier: state.tier,
       detail: `${acIds.length} AC · ${kIds.length} K constraints`,
       subdetail: dIds.length > 0 ? `traces ${dIds.length} D# decisions` : 'spec + K# contract',
-      ...phaseStatus(state.phase, state.status, ['DELIBERATE', 'INTAKE', 'PLAN']),
-      agents: [
-        {
-          id: 'einstein',
-          name: 'Einstein',
-          role: 'Research & Brief',
-          model: profiles.einstein.model,
-          effort: profiles.einstein.reasoning_effort,
-          tier: state.tier,
-          pct: brief ? 100 : state.phase === 'DELIBERATE' ? 60 : 0,
-          state: brief ? 'done' : state.phase === 'DELIBERATE' ? 'active' : 'queued',
-          task: brief
-            ? `brief.md · ${dIds.length} decision(s) (${dIds.join(', ') || 'D#'})`
-            : 'Synthesizing domain context & decision table',
-        },
-        {
-          id: 'peter',
-          name: 'Peter',
-          role: 'Spec & Architecture',
-          model: profiles.peter.model,
-          effort: profiles.peter.reasoning_effort,
-          tier: state.tier,
-          pct: spec ? 100 : state.phase === 'PLAN' ? 65 : 0,
-          state: spec ? 'done' : state.phase === 'PLAN' ? 'active' : 'queued',
-          task: spec
-            ? `spec.md · ${acIds.length} AC# + ${kIds.length} K# constraints`
-            : 'Compiling acceptance criteria & negative constraints',
-        },
-      ],
+      ...deriveCardStatus(planAgents, ['DELIBERATE', 'INTAKE', 'PLAN']),
+      agents: planAgents,
     },
     {
       id: 'build',
@@ -446,34 +576,14 @@ function inspectProjectBoard(projectDirectory, options = {}) {
           ? `${partition.batches.length} isolated batches`
           : 'isolated implementation',
       subdetail: `${builtFilesCount || partition.file_count} file(s) in scope`,
-      ...phaseStatus(state.phase, state.status, ['BUILD']),
-      agents: [
-        {
-          id: 'linus',
-          name: 'Linus',
-          role:
-            partition.mode === 'parallel_batches'
-              ? `Builder (${partition.batches.length} batches)`
-              : 'Builder (Isolated)',
-          model: profiles.linus.model,
-          effort: profiles.linus.reasoning_effort,
-          tier: state.tier,
-          pct: build ? 100 : state.phase === 'BUILD' ? 65 : 0,
-          state: build ? 'done' : state.phase === 'BUILD' ? 'active' : 'queued',
-          task: build
-            ? `build.md · ${builtFilesCount || partition.file_count} file(s) patched & syntax verified`
-            : `Implementing ${partition.file_count || 3} planned file(s)`,
-        },
-      ],
+      ...deriveCardStatus(buildAgents, ['BUILD']),
+      agents: buildAgents,
     },
     {
       id: 'verify',
       title: 'Verify',
       color: 'orange',
-      lane:
-        sensitiveSurface || state.tier === 'complex'
-          ? 'Cobalt · Sentinel · Ralph'
-          : 'Cobalt · Ralph',
+      lane: verifyAgents.map((a) => a.name).join(' · '),
       model: `${profiles.cobalt.model}`,
       effort: profiles.cobalt.reasoning_effort,
       tier: state.tier,
@@ -486,48 +596,8 @@ function inspectProjectBoard(projectDirectory, options = {}) {
         sharpness.demoted_blocking > 0
           ? `${sharpness.demoted_blocking} nit(s) demoted`
           : 'cross-checks AC# & K#',
-      ...phaseStatus(state.phase, state.status, ['REVIEW', 'TEST']),
-      agents: [
-        {
-          id: 'cobalt',
-          name: 'Cobalt',
-          role: 'Code Review',
-          model: profiles.cobalt.model,
-          effort: profiles.cobalt.reasoning_effort,
-          tier: state.tier,
-          pct: review ? 100 : state.phase === 'REVIEW' ? 75 : 0,
-          state: review ? 'done' : state.phase === 'REVIEW' ? 'active' : 'queued',
-          task: review
-            ? `review.md · ${sharpness.verified_blocking} blocking, ${sharpness.demoted_blocking} demoted`
-            : 'Auditing diff against AC# & K# contract',
-        },
-        {
-          id: 'sentinel',
-          name: 'Sentinel',
-          role: 'Security Audit',
-          model: profiles.sentinel.model,
-          effort: profiles.sentinel.reasoning_effort,
-          tier: state.tier,
-          pct: review || sentinelReview ? 100 : state.phase === 'REVIEW' ? 80 : 0,
-          state: review || sentinelReview ? 'done' : state.phase === 'REVIEW' ? 'active' : 'queued',
-          task: sensitiveSurface
-            ? 'Tenant isolation & money-math surface verified'
-            : 'Security invariant & boundary check',
-        },
-        {
-          id: 'ralph',
-          name: 'Ralph',
-          role: 'Test Suite',
-          model: profiles.ralph.model,
-          effort: profiles.ralph.reasoning_effort,
-          tier: state.tier,
-          pct: tests ? 100 : ['REVIEW', 'TEST'].includes(state.phase) ? 70 : 0,
-          state: tests ? 'done' : ['REVIEW', 'TEST'].includes(state.phase) ? 'active' : 'queued',
-          task: tests
-            ? 'tests.md · AC# regression suite passing'
-            : 'Executing targeted spec & regression suite',
-        },
-      ],
+      ...deriveCardStatus(verifyAgents, ['REVIEW', 'TEST']),
+      agents: verifyAgents,
     },
   ];
 
@@ -539,6 +609,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
     built_files: builtFilesCount,
     sensitive_surface: sensitiveSurface,
     completed_agents: completedAgents,
+    active_agents: activeAgents,
     total_agents: totalAgents,
     context_kb: contextKb,
   };
@@ -756,8 +827,16 @@ function renderHtmlDashboard(initialBoard) {
     border-radius: 50%;
     flex-shrink: 0;
   }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.88); }
+  }
+  @keyframes bar-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
   .dot-done { background: var(--green); }
-  .dot-active { background: var(--amber); }
+  .dot-active { background: var(--amber); animation: pulse-dot 1.3s ease-in-out infinite; }
   .dot-blue { background: var(--blue); }
   .dot-queued { background: #484f58; }
 
@@ -1142,6 +1221,11 @@ function renderHtmlDashboard(initialBoard) {
     background: var(--blue);
     transition: width 0.12s linear;
   }
+  .phase-card.active .card-bar-fill {
+    background: linear-gradient(90deg, var(--blue) 0%, #8bc4ff 50%, var(--blue) 100%);
+    background-size: 200% 100%;
+    animation: bar-shimmer 1.8s linear infinite;
+  }
   .phase-card.done .card-bar-fill {
     background: var(--green);
   }
@@ -1264,6 +1348,11 @@ function renderHtmlDashboard(initialBoard) {
     height: 100%;
     background: var(--blue);
     transition: width 0.12s linear;
+  }
+  .agent-item.active .agent-mini-fill {
+    background: linear-gradient(90deg, var(--amber) 0%, #f5c26b 50%, var(--amber) 100%);
+    background-size: 200% 100%;
+    animation: bar-shimmer 1.6s linear infinite;
   }
   .agent-item.done .agent-mini-fill {
     background: var(--green);
@@ -1551,6 +1640,8 @@ function renderHtmlDashboard(initialBoard) {
 
 <script>
   let currentBoard = ${safeJson};
+  let liveBoard = JSON.parse(JSON.stringify(currentBoard));
+  let lastLiveHash = JSON.stringify(liveBoard);
   let simActive = false;
   let simRafId = null;
   const expandedGroups = { plan: true, build: true, verify: true };
@@ -1870,8 +1961,9 @@ function renderHtmlDashboard(initialBoard) {
     setHtml('lbl-review', sharpness.review_filter.toFixed(2) + ' <span class="c-muted">' + (sharpness.review_filter >= 0.8 ? 'sharp' : 'split') + '</span>');
 
     const cardsRow = document.getElementById('cards-row');
-    if (cardsRow && !cardsRow._mounted) {
-      cardsRow._mounted = true;
+    const mountKey = cards.map((c) => c.id + ':' + (c.agents || []).map((a) => a.id).join(',')).join('|');
+    if (cardsRow && cardsRow._mountKey !== mountKey) {
+      cardsRow._mountKey = mountKey;
       cardsRow.innerHTML = cards.map((c) => {
         const agents = c.agents || [];
         const agentRows = agents.map((ag, aIdx) =>
@@ -2186,7 +2278,9 @@ function renderHtmlDashboard(initialBoard) {
         simRafId = requestAnimationFrame(tickSim);
       } else {
         simActive = false;
-        delete currentBoard._simTraces;
+        currentBoard = JSON.parse(JSON.stringify(liveBoard));
+        render(currentBoard);
+        requestAnimationFrame(syncSvgGeometry);
         if (btn) {
           btn.disabled = false;
           btn.textContent = 'Simulate Run';
@@ -2274,6 +2368,19 @@ function renderHtmlDashboard(initialBoard) {
     winEl.style.zoom = String(scale);
     requestAnimationFrame(syncSvgGeometry);
   }
+  window.__10X_BOARD_UPDATE = function (nextBoard) {
+    if (!nextBoard || !nextBoard.state) return;
+    const nextHash = JSON.stringify(nextBoard);
+    if (nextHash === lastLiveHash) return;
+    lastLiveHash = nextHash;
+    liveBoard = JSON.parse(nextHash);
+    if (!simActive) {
+      currentBoard = JSON.parse(nextHash);
+      render(currentBoard);
+      requestAnimationFrame(syncSvgGeometry);
+    }
+  };
+
   window.addEventListener('resize', fitViewport);
   initCometDom();
   updateExpandBtnLabel();
@@ -2286,19 +2393,23 @@ function renderHtmlDashboard(initialBoard) {
   }
   requestAnimationFrame(stepComets);
 
-  setTimeout(() => {
-    triggerSimulation();
-  }, 250);
-
   if (typeof EventSource !== 'undefined' && window.location && window.location.protocol.startsWith('http')) {
     const es = new EventSource('/api/events');
     es.addEventListener('board', (ev) => {
-      if (simActive) return;
       try {
-        currentBoard = JSON.parse(ev.data);
-        render(currentBoard);
+        window.__10X_BOARD_UPDATE(JSON.parse(ev.data));
       } catch (e) {}
     });
+  } else {
+    setInterval(() => {
+      if (simActive) return;
+      const s = document.createElement('script');
+      s.src = './board-state.js?t=' + Date.now();
+      s.async = true;
+      s.onload = () => s.remove();
+      s.onerror = () => s.remove();
+      document.head.appendChild(s);
+    }, 1000);
   }
 </script>
 </body>
@@ -2617,6 +2728,86 @@ function getUiConfig({ workspaceRoot, env, homedir } = {}) {
   };
 }
 
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureProjectWatcher(resolvedProjectDir, options = {}) {
+  if (
+    options.spawnWatcher === false ||
+    process.env.NODE_TEST_CONTEXT ||
+    process.env.SQUAD_DISABLE_WATCHER === '1'
+  ) {
+    return;
+  }
+  const pidPath = path.join(resolvedProjectDir, '.board-watcher.pid');
+  if (fs.existsSync(pidPath)) {
+    try {
+      const existingPid = Number(fs.readFileSync(pidPath, 'utf8').trim());
+      if (isProcessAlive(existingPid)) {
+        return;
+      }
+    } catch {}
+  }
+
+  const watcherScript = `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const wb = require(${JSON.stringify(__filename)});
+    const dir = ${JSON.stringify(resolvedProjectDir)};
+    const opts = ${JSON.stringify({
+      workspaceRoot: options.workspaceRoot || null,
+      repoRoot: options.repoRoot || null,
+      harness: options.harness || null,
+      spawnWatcher: false,
+    })};
+    const pidPath = path.join(dir, '.board-watcher.pid');
+    try { fs.writeFileSync(pidPath, String(process.pid)); } catch {}
+    const cleanup = () => { try { fs.unlinkSync(pidPath); } catch {} process.exit(0); };
+    setTimeout(cleanup, 20 * 60 * 1000).unref();
+    let lastSig = '';
+    const check = () => {
+      if (!fs.existsSync(path.join(dir, 'project.json'))) return cleanup();
+      try {
+        const files = fs.readdirSync(dir).filter(f => (f.endsWith('.md') || f.endsWith('.json')) && !f.startsWith('.'));
+        const sig = files.sort().map(f => {
+          try { const st = fs.statSync(path.join(dir, f)); return f + ':' + st.mtimeMs + ':' + st.size; } catch { return f; }
+        }).join('|');
+        if (sig && sig !== lastSig) {
+          lastSig = sig;
+          wb.syncProjectDashboard(dir, opts);
+          const state = JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf8'));
+          if (state.phase === 'DELIVER' || state.status === 'complete') {
+            setTimeout(cleanup, 1500);
+          }
+        }
+      } catch {}
+    };
+    check();
+    const timer = setInterval(check, 750);
+    try {
+      fs.watch(dir, (ev, fname) => {
+        if (!fname || fname === 'dashboard.html' || fname === 'board-state.js' || fname.startsWith('.')) return;
+        check();
+      });
+    } catch {}
+  `;
+
+  try {
+    const child = spawn(process.execPath, ['-e', watcherScript], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch {}
+}
+
 function syncProjectDashboard(projectDirectory, options = {}) {
   const ui = getUiConfig({
     workspaceRoot: options.workspaceRoot,
@@ -2641,19 +2832,28 @@ function syncProjectDashboard(projectDirectory, options = {}) {
       dashboard_path: null,
     };
   }
-  const dashboardPath = path.join(resolvedProjectDir, 'dashboard.html');
-  const html = renderBoard(resolvedProjectDir, {
-    format: 'html',
+  const board = inspectProjectBoard(resolvedProjectDir, {
     workspaceRoot: options.workspaceRoot,
     repoRoot: options.repoRoot,
     harness: options.harness,
   });
+  const dashboardPath = path.join(resolvedProjectDir, 'dashboard.html');
+  const stateJsPath = path.join(resolvedProjectDir, 'board-state.js');
+  const html = renderHtmlDashboard(board);
   fs.writeFileSync(dashboardPath, html);
+  fs.writeFileSync(
+    stateJsPath,
+    `window.__10X_BOARD_UPDATE && window.__10X_BOARD_UPDATE(${JSON.stringify(board)});\n`
+  );
+  if (board.state && board.state.status === 'active' && board.state.phase !== 'DELIVER') {
+    ensureProjectWatcher(resolvedProjectDir, options);
+  }
   return {
     enabled: true,
     auto_open: ui.auto_open,
     scope: ui.scope,
     dashboard_path: dashboardPath,
+    state_js_path: stateJsPath,
   };
 }
 

@@ -375,6 +375,58 @@ test('toggle-ui CLI toggles workspace UI config and controls automatic dashboard
   const onJson = JSON.parse(toggleOnRes.stdout);
   assert.equal(onJson.enabled, true);
   assert.ok(fs.existsSync(path.join(projectDir, 'dashboard.html')));
+  assert.ok(fs.existsSync(path.join(projectDir, 'board-state.js')));
+  const html = fs.readFileSync(path.join(projectDir, 'dashboard.html'), 'utf8');
+  assert.doesNotMatch(html, /setTimeout\(\(\)\s*=>\s*\{\s*triggerSimulation\(\);/);
+  assert.match(html, /window\.__10X_BOARD_UPDATE/);
 });
+
+test('inspectProjectBoard keeps Verify active when Cobalt finishes review.md while Sentinel and Ralph are still running', () => {
+  const { inspectProjectBoard } = require('../assets/runtime/workflow-board');
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-live-review-'));
+  fs.writeFileSync(path.join(projectDir, 'CONTEXT.md'), '# PR Review\n');
+  fs.writeFileSync(
+    path.join(projectDir, 'spec.md'),
+    `${sampleSpec}\n## Sensitive Surface\n- Money-math and raw SQL\n`
+  );
+  fs.writeFileSync(path.join(projectDir, 'build.md'), sampleBuild);
+  fs.writeFileSync(
+    path.join(projectDir, 'review.md'),
+    `## Verdict: APPROVE\n\n## Findings\nNone.\n\n## Summary\nLooks good.\n`
+  );
+  fs.writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      schema_version: 1,
+      slug: 'pay-1903-pr-review',
+      title: 'PR Review',
+      tier: 'standard_clear',
+      status: 'active',
+      phase: 'REVIEW',
+      updated_at: '2026-10-15T20:06:43.732Z',
+      next_action: 'Dispatch Cobalt, Sentinel, and Ralph in the verification wave.',
+      unresolved_questions: [],
+      artifacts: {
+        context: 'CONTEXT.md',
+        spec: 'spec.md',
+        build: 'build.md',
+        review: 'review.md',
+      },
+    })
+  );
+
+  const board = inspectProjectBoard(projectDir);
+  assert.equal(board.counts.total_agents, 5);
+  assert.equal(board.counts.completed_agents, 3);
+  assert.equal(board.counts.active_agents, 2);
+
+  const verifyCard = board.cards.find((c) => c.id === 'verify');
+  assert.equal(verifyCard.state, 'active');
+  assert.equal(verifyCard.badge, '● 1/3 done');
+  assert.equal(verifyCard.agents.find((a) => a.id === 'cobalt').state, 'done');
+  assert.equal(verifyCard.agents.find((a) => a.id === 'sentinel').state, 'active');
+  assert.equal(verifyCard.agents.find((a) => a.id === 'ralph').state, 'active');
+});
+
 
 
