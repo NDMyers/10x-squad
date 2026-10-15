@@ -428,5 +428,99 @@ test('inspectProjectBoard keeps Verify active when Cobalt finishes review.md whi
   assert.equal(verifyCard.agents.find((a) => a.id === 'ralph').state, 'active');
 });
 
+test('inspectProjectBoard computes stage/agent bottleneck durations and tracks non-linear REVIEW -> BUILD rework loopbacks', () => {
+  const { inspectProjectBoard } = require('../assets/runtime/workflow-board');
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-loopback-'));
+
+  const writeWithMtime = (relPath, content, epochSec) => {
+    const full = path.join(projectDir, relPath);
+    fs.writeFileSync(full, content);
+    fs.utimesSync(full, epochSec, epochSec);
+  };
+
+  writeWithMtime('CONTEXT.md', '# Non-linear Demo\n', 1700000000);
+  writeWithMtime('spec.md', sampleSpec, 1700000090); // 1m 30s
+  writeWithMtime('gate-plan.json', '{"ok":true}', 1700000090);
+  writeWithMtime('build.md', sampleBuild, 1700000330); // +4m 00s
+  writeWithMtime('gate-build.json', '{"ok":true}', 1700000330);
+  writeWithMtime(
+    'review.md',
+    `## Verdict: REQUEST_CHANGES\n\n## Findings\n1. **[MAJOR]** — Tenant scope (K1) — \`app/services/payment_calculator.rb:12\`\n   Missing tenant predicate.\n   Proof: Payment.find(id) at app/services/payment_calculator.rb:12\n\n## Summary\nNeeds K1 fix.\n`,
+    1700001050
+  ); // +12m 00s
+
+  // 1. In REVIEW when review.md is submitted
+  fs.writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      schema_version: 1,
+      slug: path.basename(projectDir),
+      title: 'Loopback Demo',
+      tier: 'standard_clear',
+      status: 'active',
+      phase: 'REVIEW',
+      updated_at: new Date(1700001050 * 1000).toISOString(),
+      next_action: 'Route verified blocking finding to Linus.',
+      unresolved_questions: [],
+      artifacts: {
+        context: 'CONTEXT.md',
+        spec: 'spec.md',
+        gate_plan: 'gate-plan.json',
+        build: 'build.md',
+        gate_build: 'gate-build.json',
+        review: 'review.md',
+      },
+    })
+  );
+
+  const reviewBoard = inspectProjectBoard(projectDir);
+  assert.equal(reviewBoard.timing.plan_label, '1m 30s');
+  assert.equal(reviewBoard.timing.build_label, '4m');
+  assert.equal(reviewBoard.timing.verify_label, '12m');
+  assert.equal(reviewBoard.timing.bottleneck_stage, 'Verify');
+  assert.equal(reviewBoard.cards.find((c) => c.id === 'verify').is_bottleneck, true);
+
+  // 2. Non-linear loopback: REVIEW -> BUILD (REQUEST_CHANGES)
+  fs.writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      schema_version: 1,
+      slug: path.basename(projectDir),
+      title: 'Loopback Demo',
+      tier: 'standard_clear',
+      status: 'active',
+      phase: 'BUILD',
+      updated_at: new Date(1700001060 * 1000).toISOString(),
+      next_action: 'Linus fixing K1 tenant-scope finding (Cycle 2).',
+      unresolved_questions: [],
+      artifacts: {
+        context: 'CONTEXT.md',
+        spec: 'spec.md',
+        gate_plan: 'gate-plan.json',
+        build: 'build.md',
+        gate_build: 'gate-build.json',
+        review: 'review.md',
+      },
+    })
+  );
+
+  const reworkBoard = inspectProjectBoard(projectDir);
+  assert.equal(reworkBoard.timing.non_linear.active, true);
+  assert.equal(reworkBoard.timing.non_linear.mode, 'rework-to-build');
+  assert.equal(reworkBoard.timing.non_linear.reason, 'REQUEST_CHANGES');
+  assert.equal(reworkBoard.timing.non_linear.cycles.build, 2);
+
+  const buildCard = reworkBoard.cards.find((c) => c.id === 'build');
+  assert.equal(buildCard.state, 'active');
+  assert.equal(buildCard.badge, '↻ cycle 2 · build');
+  assert.equal(buildCard.agents[0].state, 'active');
+  assert.equal(buildCard.agents[0].cycle, 2);
+
+  const verifyCard = reworkBoard.cards.find((c) => c.id === 'verify');
+  assert.equal(verifyCard.state, 'rework');
+  assert.equal(verifyCard.badge, '↺ rework -> build');
+});
+
+
 
 
