@@ -32,7 +32,7 @@ EINSTEIN BRIEF CONSUMPTION:
 
 SPEC-NOT-CODE MANDATE:
 - Every section must describe WHAT and WHERE, never HOW in code terms.
-- File Plan entries are paths + change descriptions, not diffs.
+- File Plan entries are paths + change descriptions, not diffs. Every created or modified file MUST be listed directly under `## File Plan` as a `- \`path/to/file\` — description` bullet (or a Markdown table with backticked repo-relative paths in the first/second column); never defer the file list to an Appendix pointer (`See Appendix A.1`).
 - Acceptance Criteria are testable assertions, not implementation steps.
 
 TRACEABILITY MANDATE:
@@ -90,7 +90,7 @@ Vivaldi runs these checks after Peter returns. All must pass or the spec is sent
 
 1. **All sections present** — Summary, Architecture, File Plan, Acceptance Criteria, Edge Cases. No omissions.
 2. **AC testable** — Every acceptance criterion has a verifiable pass/fail condition. No subjective language ("should feel fast", "works correctly").
-3. **File paths concrete** — Every File Plan entry uses a real, existing file path or a specific new file path. No placeholders, no "relevant files."
+3. **File paths concrete and inline** — Every File Plan entry uses a real, existing file path or a specific new file path listed directly under `## File Plan` (`- \`path/to/file\` — description` or a Markdown table with backticked paths). No placeholders, no "relevant files," and no Appendix-only file lists.
 4. **No code** — Zero code snippets, pseudocode, or inline implementation details anywhere in the spec.
 5. **No filler** — No disclaimers, caveats, "please note," or padding. Every sentence conveys spec information.
 6. **Edge cases non-trivial** — Edge cases are not negations of AC ("user without permission is denied"). They surface genuinely non-obvious scenarios.

@@ -521,6 +521,88 @@ test('inspectProjectBoard computes stage/agent bottleneck durations and tracks n
   assert.equal(verifyCard.badge, '↺ rework -> build');
 });
 
+test('parseFilePlan supports Markdown tables and Appendix fallback, and verifyBuild flags EMPTY_FILE_PLAN', () => {
+  const { parseFilePlan } = require('../assets/runtime/build-verifier');
+
+  const tableSpec = `
+## Summary
+Table-formatted File Plan.
+
+## File Plan
+| # | File | Action | Purpose |
+|---|------|--------|---------|
+| 1 | \`frontend/src/components/IntakeExperience.tsx\` | Modify | Inline intake |
+| 2 | \`frontend/src/components/__tests__/intake-experience.test.tsx\` | Modify | Unit tests |
+
+## Acceptance Criteria
+1. (AC1) Works.
+`;
+  assert.deepEqual(parseFilePlan(tableSpec), [
+    'frontend/src/components/IntakeExperience.tsx',
+    'frontend/src/components/__tests__/intake-experience.test.tsx',
+  ]);
+
+  const appendixSpec = `
+## Summary
+Appendix fallback File Plan.
+
+## File Plan
+See Appendix A for the full 2-file table.
+
+## Acceptance Criteria
+1. (AC1) Works.
+
+## Appendix A — File Plan Table
+| File | Action |
+|------|--------|
+| \`app/models/payment.rb\` | Modify |
+| \`spec/models/payment_spec.rb\` | Modify |
+`;
+  assert.deepEqual(parseFilePlan(appendixSpec), [
+    'app/models/payment.rb',
+    'spec/models/payment_spec.rb',
+  ]);
+
+  const emptyPlanCheck = verifyBuild({
+    spec: '## Summary\nNo files listed.\n## File Plan\nTBD.\n',
+    build: '## Changelist\n- `app/models/payment.rb` (AC1) — Changed.\n',
+  });
+  assert.equal(emptyPlanCheck.scope_clean, false);
+  assert.ok(emptyPlanCheck.warnings.some((w) => w.code === 'EMPTY_FILE_PLAN'));
+});
+
+test('partitionFilePlan normalizes PascalCase/kebab-case test stems and coalesces >4 disjoint files into bounded parallel batches', () => {
+  const stemSpec = `
+## File Plan
+- \`frontend/src/components/IntakeExperience.tsx\` — Component
+- \`frontend/src/components/__tests__/intake-experience.test.tsx\` — Component test
+- \`frontend/src/services/BillingClient.ts\` — Billing client
+- \`frontend/src/services/__tests__/billing-client.spec.ts\` — Billing test
+`;
+  const stemPartition = partitionFilePlan({ spec: stemSpec });
+  assert.equal(stemPartition.mode, 'parallel_batches');
+  assert.equal(stemPartition.batches.length, 2);
+  assert.deepEqual(stemPartition.batches[0], [
+    'frontend/src/components/IntakeExperience.tsx',
+    'frontend/src/components/__tests__/intake-experience.test.tsx',
+  ]);
+
+  const manyDisjointSpec = `
+## File Plan
+- \`frontend/src/a/One.tsx\` — 1
+- \`frontend/src/b/Two.tsx\` — 2
+- \`frontend/src/c/Three.tsx\` — 3
+- \`frontend/src/d/Four.tsx\` — 4
+- \`frontend/src/e/Five.tsx\` — 5
+- \`frontend/src/f/Six.tsx\` — 6
+- \`frontend/src/g/Seven.tsx\` — 7
+`;
+  const coalesced = partitionFilePlan({ spec: manyDisjointSpec });
+  assert.equal(coalesced.mode, 'parallel_batches');
+  assert.equal(coalesced.batches.length, 3);
+});
+
+
 
 
 

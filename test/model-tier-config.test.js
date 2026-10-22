@@ -871,6 +871,35 @@ test('resolve: workspace precedence over global, and fallthrough per harness', (
   assert.equal(out.scope, 'global');
 });
 
+test('resolveEffectiveProfile exports programmatic resolution for phase-runner next_dispatches', () => {
+  const sb = sandbox();
+  writeJson(sb.globalFile, {
+    schema_version: 3,
+    updated_at: NOW,
+    harnesses: {
+      'copilot-cli': mkProfile('claude-haiku-5.5', {
+        dispatch_settings: mkDispatchSettings('medium', 'long_context'),
+      }),
+    },
+  });
+
+  const resolved = engine.resolveEffectiveProfile({
+    workspaceRoot: sb.root,
+    harness: 'copilot-cli',
+    tier: 'standard_ambiguous',
+    persona: 'linus',
+    env: sb.env,
+  });
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.agent, '10x-linus');
+  assert.equal(resolved.model, 'claude-haiku-5.5');
+  assert.equal(resolved.reasoning_effort, 'medium');
+  assert.equal(resolved.context_tier, 'long_context');
+  assert.equal(resolved.result.agent, '10x-linus');
+  assert.equal(resolved.result.context_tier, 'long_context');
+});
+
+
 test('validate-profile: valid input exits 0, invalid exits 2', () => {
   const sb = sandbox();
   const good = path.join(sb.root, 'good.json');
