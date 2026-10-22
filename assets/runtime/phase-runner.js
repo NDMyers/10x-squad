@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { validateHandoff } = require('./handoff-validator');
 const { validateReview } = require('./review-validator');
@@ -72,10 +73,26 @@ function resolveNextDispatches({ workspaceRoot, harness, tier, personas }) {
   try {
     modelTierConfig = require('../skills/10x-squad-configure-tiers/scripts/model-tier-config');
   } catch {
-    const fallbackPath = workspaceRoot
-      ? path.join(workspaceRoot, '.github', 'skills', '10x-squad-configure-tiers', 'scripts', 'model-tier-config.js')
-      : null;
-    if (fallbackPath && fs.existsSync(fallbackPath)) {
+    const home = os.homedir();
+    const relScript = path.join('skills', '10x-squad-configure-tiers', 'scripts', 'model-tier-config.js');
+    const candidates = [
+      ...(workspaceRoot
+        ? [
+            path.join(workspaceRoot, '.github', relScript),
+            path.join(workspaceRoot, '.agents', relScript),
+          ]
+        : []),
+      path.join(__dirname, '..', '..', '.github', relScript),
+      path.join(__dirname, '..', '..', '.agents', relScript),
+      ...(home
+        ? [
+            path.join(home, '.github', relScript),
+            path.join(home, '.agents', relScript),
+          ]
+        : []),
+    ];
+    const fallbackPath = candidates.find((candidate) => fs.existsSync(candidate));
+    if (fallbackPath) {
       modelTierConfig = require(fallbackPath);
     }
   }

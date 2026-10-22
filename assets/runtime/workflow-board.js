@@ -29,6 +29,147 @@ function fileMtimeIso(projectDir, relativePath) {
   }
 }
 
+function fileStatInfo(projectDir, relativePath) {
+  if (!relativePath || typeof relativePath !== 'string') return null;
+  const fullPath = path.resolve(projectDir, relativePath);
+  if (!fs.existsSync(fullPath)) return null;
+  try {
+    const st = fs.statSync(fullPath);
+    return {
+      mtimeMs: st.mtimeMs,
+      birthtimeMs: st.birthtimeMs || st.mtimeMs,
+      iso: st.mtime.toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatDurationMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  const totalSec = Math.max(1, Math.round(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  if (mins < 60) {
+    return secs > 0 ? `${mins}m ${String(secs).padStart(2, '0')}s` : `${mins}m`;
+  }
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hrs}h ${remMins}m`;
+}
+
+function loadAndUpdateTelemetry(projectDirectory, state, stats, options = {}) {
+  const telemetryPath = path.join(projectDirectory, 'telemetry.json');
+  let telemetry = {
+    schema_version: 1,
+    current_phase: null,
+    phase_entered_at: {},
+    phase_accumulated_ms: {},
+    cycle_counts: { plan: 1, build: 1, verify: 1 },
+    loopbacks: [],
+    last_loopback: null,
+  };
+
+  if (fs.existsSync(telemetryPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(telemetryPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        telemetry = {
+          ...telemetry,
+          ...parsed,
+          phase_entered_at: { ...telemetry.phase_entered_at, ...(parsed.phase_entered_at || {}) },
+          phase_accumulated_ms: { ...telemetry.phase_accumulated_ms, ...(parsed.phase_accumulated_ms || {}) },
+          cycle_counts: { ...telemetry.cycle_counts, ...(parsed.cycle_counts || {}) },
+          loopbacks: Array.isArray(parsed.loopbacks) ? parsed.loopbacks : [],
+        };
+      }
+    } catch {}
+  }
+
+  const nowIso = state.updated_at || new Date().toISOString();
+  const nowMs = Date.parse(nowIso) || Date.now();
+  const prevPhase = telemetry.current_phase;
+
+  if (prevPhase && prevPhase !== state.phase) {
+    const enteredIso = telemetry.phase_entered_at[prevPhase];
+    const enteredMs = enteredIso ? Date.parse(enteredIso) : null;
+    if (enteredMs && nowMs > enteredMs) {
+      telemetry.phase_accumulated_ms[prevPhase] =
+        (telemetry.phase_accumulated_ms[prevPhase] || 0) + (nowMs - enteredMs);
+    }
+
+    const prevIdx = PHASE_ORDER.indexOf(prevPhase);
+    const nextIdx = PHASE_ORDER.indexOf(state.phase);
+    if (prevIdx > nextIdx && nextIdx >= 0) {
+      if (state.phase === 'BUILD' && ['REVIEW', 'TEST'].includes(prevPhase)) {
+        telemetry.cycle_counts.build = (telemetry.cycle_counts.build || 1) + 1;
+        const loop = {
+          from: prevPhase,
+          to: 'BUILD',
+          reason: prevPhase === 'TEST' ? 'FAILURES_FOUND' : 'REQUEST_CHANGES',
+          cycle: telemetry.cycle_counts.build,
+          at: nowIso,
+        };
+        telemetry.loopbacks.push(loop);
+        telemetry.last_loopback = loop;
+      } else if (state.phase === 'PLAN' && prevPhase === 'REVIEW') {
+        telemetry.cycle_counts.plan = (telemetry.cycle_counts.plan || 1) + 1;
+        const loop = {
+          from: 'REVIEW',
+          to: 'PLAN',
+          reason: 'SPEC_DISPUTE',
+          cycle: telemetry.cycle_counts.plan,
+          at: nowIso,
+        };
+        telemetry.loopbacks.push(loop);
+        telemetry.last_loopback = loop;
+      }
+    } else if (state.phase === 'REVIEW' && (telemetry.cycle_counts.build || 1) > (telemetry.cycle_counts.verify || 1)) {
+      telemetry.cycle_counts.verify = telemetry.cycle_counts.build;
+    }
+  }
+
+  if (telemetry.current_phase !== state.phase) {
+    telemetry.current_phase = state.phase;
+    telemetry.phase_entered_at[state.phase] = nowIso;
+  }
+
+  // Artifact-based loopback inference (when review.md or tests.md already exists during BUILD or PLAN)
+  const hasDownstreamVerifyArtifact = Boolean(stats.review || stats.sentinel || stats.tests);
+  if (state.phase === 'BUILD' && hasDownstreamVerifyArtifact) {
+    telemetry.cycle_counts.build = Math.max(telemetry.cycle_counts.build || 1, 2);
+    if (!telemetry.last_loopback || telemetry.last_loopback.to !== 'BUILD') {
+      telemetry.last_loopback = {
+        from: stats.tests && (!stats.review || stats.tests.mtimeMs >= stats.review.mtimeMs) ? 'TEST' : 'REVIEW',
+        to: 'BUILD',
+        reason: stats.tests && (!stats.review || stats.tests.mtimeMs >= stats.review.mtimeMs) ? 'FAILURES_FOUND' : 'REQUEST_CHANGES',
+        cycle: telemetry.cycle_counts.build,
+        at: nowIso,
+      };
+    }
+  } else if (state.phase === 'PLAN' && (hasDownstreamVerifyArtifact || Boolean(stats.build))) {
+    telemetry.cycle_counts.plan = Math.max(telemetry.cycle_counts.plan || 1, 2);
+    if (!telemetry.last_loopback || telemetry.last_loopback.to !== 'PLAN') {
+      telemetry.last_loopback = {
+        from: 'REVIEW',
+        to: 'PLAN',
+        reason: 'SPEC_DISPUTE',
+        cycle: telemetry.cycle_counts.plan,
+        at: nowIso,
+      };
+    }
+  }
+
+  if (options.persistTelemetry !== false) {
+    try {
+      fs.writeFileSync(telemetryPath, `${JSON.stringify(telemetry, null, 2)}\n`);
+    } catch {}
+  }
+
+  return telemetry;
+}
+
 function clamp01(value) {
   if (!Number.isFinite(value)) return 1;
   return Math.max(0, Math.min(1, value));
@@ -233,7 +374,7 @@ function resolvePersonaProfiles({ workspaceRoot, harness, tier }) {
   return defaults;
 }
 
-function buildSessionLog(projectDirectory, state, sharpness, profiles, counts, partition) {
+function buildSessionLog(projectDirectory, state, sharpness, profiles, counts, partition, timing) {
   const events = [];
   const artifacts = state.artifacts || {};
   const fmtTime = (iso) => (iso ? iso.slice(11, 19) : state.updated_at.slice(11, 19));
@@ -301,6 +442,17 @@ function buildSessionLog(projectDirectory, state, sharpness, profiles, counts, p
     });
   }
 
+  if (timing && timing.non_linear && Array.isArray(timing.non_linear.loopbacks)) {
+    for (const lp of timing.non_linear.loopbacks) {
+      events.push({
+        time: fmtTime(lp.at),
+        actor: 'control.js',
+        role: 'gate',
+        text: `↺ ${lp.reason} (${lp.from} -> ${lp.to}) · routed to Cycle ${lp.cycle}`,
+      });
+    }
+  }
+
   const testsTime = fileMtimeIso(projectDirectory, artifacts.tests || 'tests.md');
   if (testsTime) {
     events.push({
@@ -317,7 +469,7 @@ function buildSessionLog(projectDirectory, state, sharpness, profiles, counts, p
     role: 'thinker',
     text:
       state.phase === 'DELIVER' || state.status === 'complete'
-        ? `signs off · verified changes ready for delivery`
+        ? `signs off · verified changes ready for delivery (${timing ? timing.total_label : 'done'})`
         : `${state.phase.toLowerCase()} · ${state.next_action || 'awaiting next transition'}`,
   });
 
@@ -374,6 +526,33 @@ function inspectProjectBoard(projectDirectory, options = {}) {
   const hasGatePlan = Boolean(readOptionalFile(projectDirectory, artifacts.gate_plan || 'gate-plan.json'));
   const hasGateBuild = Boolean(readOptionalFile(projectDirectory, artifacts.gate_build || 'gate-build.json'));
 
+  const stats = {
+    context: fileStatInfo(projectDirectory, artifacts.context || 'CONTEXT.md'),
+    brief: fileStatInfo(projectDirectory, artifacts.brief || 'brief.md'),
+    spec: fileStatInfo(projectDirectory, artifacts.spec || 'spec.md'),
+    gatePlan: fileStatInfo(projectDirectory, artifacts.gate_plan || 'gate-plan.json'),
+    build: fileStatInfo(projectDirectory, artifacts.build || 'build.md'),
+    gateBuild: fileStatInfo(projectDirectory, artifacts.gate_build || 'gate-build.json'),
+    review: fileStatInfo(projectDirectory, artifacts.review || 'review.md'),
+    sentinel: fileStatInfo(projectDirectory, artifacts.sentinel_review || 'sentinel-review.md'),
+    tests: fileStatInfo(projectDirectory, artifacts.tests || 'tests.md'),
+  };
+
+  const telemetry = loadAndUpdateTelemetry(projectDirectory, state, stats, {
+    persistTelemetry: options.persistTelemetry !== false,
+  });
+
+  const latestVerifyMs = Math.max(
+    stats.review?.mtimeMs || 0,
+    stats.sentinel?.mtimeMs || 0,
+    stats.tests?.mtimeMs || 0
+  );
+  const isBuildLoopback =
+    state.phase === 'BUILD' && ((telemetry.cycle_counts.build || 1) > 1 || latestVerifyMs > 0);
+  const isPlanLoopback =
+    state.phase === 'PLAN' &&
+    ((telemetry.cycle_counts.plan || 1) > 1 || latestVerifyMs > 0 || Boolean(stats.build));
+
   const includeEinstein =
     Boolean(brief) || ['standard_ambiguous', 'complex'].includes(state.tier) || state.phase === 'DELIBERATE';
   const includeSentinel = Boolean(sentinelReview) || sensitiveSurface || state.tier === 'complex';
@@ -382,26 +561,138 @@ function inspectProjectBoard(projectDirectory, options = {}) {
   const einsteinDone = Boolean(brief) || phaseIdx > PHASE_ORDER.indexOf('DELIBERATE') || isProjectComplete;
   const einsteinActive = !einsteinDone && state.phase === 'DELIBERATE';
 
+  const specFreshForPlanCycle =
+    Boolean(spec) && (!isPlanLoopback || !latestVerifyMs || (stats.spec && stats.spec.mtimeMs > latestVerifyMs));
   const peterDone =
-    (Boolean(spec) && (phaseIdx > PHASE_ORDER.indexOf('PLAN') || hasGatePlan)) || isProjectComplete;
+    (specFreshForPlanCycle && (phaseIdx > PHASE_ORDER.indexOf('PLAN') || (hasGatePlan && !isPlanLoopback))) ||
+    isProjectComplete;
   const peterActive = !peterDone && ['INTAKE', 'PLAN'].includes(state.phase);
 
+  const buildFreshForBuildCycle =
+    Boolean(build) && (!isBuildLoopback || !latestVerifyMs || (stats.build && stats.build.mtimeMs > latestVerifyMs));
   const linusDone =
-    (Boolean(build) && (phaseIdx > PHASE_ORDER.indexOf('BUILD') || hasGateBuild)) || isProjectComplete;
+    (buildFreshForBuildCycle && (phaseIdx > PHASE_ORDER.indexOf('BUILD') || (hasGateBuild && !isBuildLoopback))) ||
+    isProjectComplete;
   const linusActive = !linusDone && state.phase === 'BUILD';
 
-  const cobaltDone = Boolean(review) || phaseIdx > PHASE_ORDER.indexOf('REVIEW') || isProjectComplete;
+  const reviewFreshForBuild =
+    Boolean(review) &&
+    !isBuildLoopback &&
+    !isPlanLoopback &&
+    (!stats.build || !stats.review || stats.review.mtimeMs >= stats.build.mtimeMs);
+  const cobaltDone = reviewFreshForBuild || phaseIdx > PHASE_ORDER.indexOf('REVIEW') || isProjectComplete;
   const cobaltActive = !cobaltDone && state.phase === 'REVIEW';
 
   const sentinelHasOutput =
     Boolean(sentinelReview) ||
     (Boolean(review) && /##\s+Threat Model|##\s+Surfaces Reviewed/i.test(review));
-  const sentinelDone = sentinelHasOutput || phaseIdx > PHASE_ORDER.indexOf('REVIEW') || isProjectComplete;
+  const sentinelFreshForBuild =
+    sentinelHasOutput &&
+    !isBuildLoopback &&
+    !isPlanLoopback &&
+    (!stats.build ||
+      ((stats.sentinel?.mtimeMs || stats.review?.mtimeMs || 0) >= stats.build.mtimeMs));
+  const sentinelDone = sentinelFreshForBuild || phaseIdx > PHASE_ORDER.indexOf('REVIEW') || isProjectComplete;
   const sentinelActive = !sentinelDone && state.phase === 'REVIEW';
 
-  const ralphDone = Boolean(tests) || phaseIdx > PHASE_ORDER.indexOf('TEST') || isProjectComplete;
+  const testsFreshForBuild =
+    Boolean(tests) &&
+    !isBuildLoopback &&
+    !isPlanLoopback &&
+    (!stats.build || !stats.tests || stats.tests.mtimeMs >= stats.build.mtimeMs);
+  const ralphDone = testsFreshForBuild || phaseIdx > PHASE_ORDER.indexOf('TEST') || isProjectComplete;
   const ralphDispatchedInReview = state.phase === 'REVIEW' && /ralph/i.test(state.next_action || '');
   const ralphActive = !ralphDone && (state.phase === 'TEST' || ralphDispatchedInReview);
+
+  const nowMs = Date.now();
+  const candidateStarts = Object.values(stats)
+    .filter(Boolean)
+    .flatMap((s) => [s.birthtimeMs, s.mtimeMs])
+    .filter((v) => Number.isFinite(v) && v > 0);
+  const earliestEnteredMs = Object.values(telemetry.phase_entered_at || {})
+    .map((iso) => Date.parse(iso))
+    .filter((v) => Number.isFinite(v) && v > 0);
+  const projectStartMs =
+    candidateStarts.length > 0 || earliestEnteredMs.length > 0
+      ? Math.min(...candidateStarts, ...earliestEnteredMs)
+      : Date.parse(state.updated_at) || nowMs;
+
+  const einsteinStartMs = projectStartMs;
+  const einsteinEndMs =
+    stats.brief?.mtimeMs || (einsteinDone ? stats.spec?.birthtimeMs || stats.spec?.mtimeMs || projectStartMs : null);
+  const einsteinDurMs = einsteinDone && einsteinEndMs
+    ? Math.max(1000, einsteinEndMs - einsteinStartMs)
+    : einsteinActive
+      ? Math.max(1000, nowMs - einsteinStartMs)
+      : 0;
+
+  const peterStartMs = isPlanLoopback
+    ? latestVerifyMs || Date.parse(telemetry.phase_entered_at.PLAN || '') || projectStartMs
+    : stats.brief?.mtimeMs || projectStartMs;
+  const peterEndMs = peterDone
+    ? stats.spec?.mtimeMs || stats.gatePlan?.mtimeMs || Date.parse(state.updated_at) || peterStartMs
+    : null;
+  const peterDurMs = peterDone && peterEndMs
+    ? Math.max(1000, peterEndMs - peterStartMs)
+    : peterActive
+      ? Math.max(1000, nowMs - peterStartMs)
+      : 0;
+
+  const linusStartMs = isBuildLoopback
+    ? latestVerifyMs || Date.parse(telemetry.phase_entered_at.BUILD || '') || projectStartMs
+    : stats.spec?.mtimeMs || stats.gatePlan?.mtimeMs || Date.parse(telemetry.phase_entered_at.BUILD || '') || projectStartMs;
+  const linusEndMs = linusDone
+    ? stats.build?.mtimeMs || stats.gateBuild?.mtimeMs || Date.parse(state.updated_at) || linusStartMs
+    : null;
+  const linusDurMs = linusDone && linusEndMs
+    ? Math.max(1000, linusEndMs - linusStartMs)
+    : linusActive
+      ? Math.max(1000, nowMs - linusStartMs)
+      : 0;
+
+  const reviewStartMs =
+    stats.build?.mtimeMs ||
+    stats.gateBuild?.mtimeMs ||
+    Date.parse(telemetry.phase_entered_at.REVIEW || '') ||
+    projectStartMs;
+  const cobaltEndMs = cobaltDone
+    ? stats.review?.mtimeMs || stats.tests?.mtimeMs || Date.parse(state.updated_at) || reviewStartMs
+    : null;
+  const cobaltDurMs = cobaltDone && cobaltEndMs
+    ? Math.max(1000, cobaltEndMs - reviewStartMs)
+    : cobaltActive
+      ? Math.max(1000, nowMs - reviewStartMs)
+      : 0;
+
+  const sentinelEndMs = sentinelDone
+    ? stats.sentinel?.mtimeMs || stats.review?.mtimeMs || stats.tests?.mtimeMs || Date.parse(state.updated_at) || reviewStartMs
+    : null;
+  const sentinelDurMs = sentinelDone && sentinelEndMs
+    ? Math.max(1000, sentinelEndMs - reviewStartMs)
+    : sentinelActive
+      ? Math.max(1000, nowMs - reviewStartMs)
+      : 0;
+
+  const ralphSequentialStart =
+    stats.review?.mtimeMs && (!stats.tests || stats.tests.mtimeMs > stats.review.mtimeMs + 1000)
+      ? Math.max(stats.review.mtimeMs, stats.sentinel?.mtimeMs || 0)
+      : null;
+  const ralphStartMs =
+    ralphSequentialStart ||
+    Date.parse(telemetry.phase_entered_at.TEST || '') ||
+    reviewStartMs;
+  const ralphEndMs = ralphDone
+    ? stats.tests?.mtimeMs || Date.parse(state.updated_at) || ralphStartMs
+    : null;
+  const ralphDurMs = ralphDone && ralphEndMs
+    ? Math.max(1000, ralphEndMs - ralphStartMs)
+    : ralphActive
+      ? Math.max(1000, nowMs - ralphStartMs)
+      : 0;
+
+  const planCycle = telemetry.cycle_counts.plan || 1;
+  const buildCycle = telemetry.cycle_counts.build || 1;
+  const verifyCycle = Math.max(telemetry.cycle_counts.verify || 1, buildCycle > 1 && ['REVIEW', 'TEST', 'DELIVER'].includes(state.phase) ? buildCycle : 1);
 
   const planAgents = [
     ...(includeEinstein
@@ -415,6 +706,10 @@ function inspectProjectBoard(projectDirectory, options = {}) {
             tier: state.tier,
             pct: einsteinDone ? 100 : einsteinActive ? 60 : 0,
             state: einsteinDone ? 'done' : einsteinActive ? 'active' : 'queued',
+            duration_ms: einsteinDurMs,
+            duration_label: formatDurationMs(einsteinDurMs),
+            started_at_ms: einsteinActive ? Math.round(einsteinStartMs) : null,
+            cycle: 1,
             task: brief
               ? `brief.md · ${dIds.length} decision(s) (${dIds.join(', ') || 'D#'})`
               : einsteinActive
@@ -430,13 +725,19 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       model: profiles.peter.model,
       effort: profiles.peter.reasoning_effort,
       tier: state.tier,
-      pct: peterDone ? 100 : Boolean(spec) ? 85 : peterActive ? 65 : 0,
+      pct: peterDone ? 100 : specFreshForPlanCycle ? 85 : peterActive ? 65 : 0,
       state: peterDone ? 'done' : peterActive ? 'active' : 'queued',
-      task: spec
+      duration_ms: peterDurMs,
+      duration_label: formatDurationMs(peterDurMs),
+      started_at_ms: peterActive ? Math.round(peterStartMs) : null,
+      cycle: planCycle,
+      task: peterDone
         ? `spec.md · ${acIds.length} AC# + ${kIds.length} K# constraints`
-        : peterActive
-          ? 'Running: compiling acceptance criteria & K# constraints'
-          : 'Queued for spec authoring',
+        : isPlanLoopback
+          ? `Cycle ${planCycle} (SPEC_DISPUTE): amending spec.md`
+          : peterActive
+            ? 'Running: compiling acceptance criteria & K# constraints'
+            : 'Queued for spec authoring',
     },
   ];
 
@@ -451,13 +752,19 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       model: profiles.linus.model,
       effort: profiles.linus.reasoning_effort,
       tier: state.tier,
-      pct: linusDone ? 100 : Boolean(build) ? 85 : linusActive ? 65 : 0,
+      pct: linusDone ? 100 : buildFreshForBuildCycle ? 85 : linusActive ? 65 : 0,
       state: linusDone ? 'done' : linusActive ? 'active' : 'queued',
-      task: build
-        ? `build.md · ${builtFilesCount || partition.file_count} file(s) patched & syntax verified`
-        : linusActive
-          ? `Running: implementing ${partition.file_count || 3} planned file(s)`
-          : `Queued for ${partition.file_count || 3} planned file(s)`,
+      duration_ms: linusDurMs,
+      duration_label: formatDurationMs(linusDurMs),
+      started_at_ms: linusActive ? Math.round(linusStartMs) : null,
+      cycle: buildCycle,
+      task: linusDone
+        ? `build.md · ${builtFilesCount || partition.file_count} file(s) patched${buildCycle > 1 ? ` (Cycle ${buildCycle})` : ' & syntax verified'}`
+        : isBuildLoopback
+          ? `Cycle ${buildCycle} (${telemetry.last_loopback?.reason || 'REWORK'}): fixing verify findings`
+          : linusActive
+            ? `Running: implementing ${partition.file_count || 3} planned file(s)`
+            : `Queued for ${partition.file_count || 3} planned file(s)`,
     },
   ];
 
@@ -471,11 +778,17 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       tier: state.tier,
       pct: cobaltDone ? 100 : cobaltActive ? 70 : 0,
       state: cobaltDone ? 'done' : cobaltActive ? 'active' : 'queued',
-      task: review
+      duration_ms: cobaltDurMs,
+      duration_label: formatDurationMs(cobaltDurMs),
+      started_at_ms: cobaltActive ? Math.round(reviewStartMs) : null,
+      cycle: verifyCycle,
+      task: cobaltDone
         ? `review.md · ${sharpness.verified_blocking} blocking, ${sharpness.demoted_blocking} demoted`
-        : cobaltActive
-          ? 'Running: auditing diff against AC# & K# contract'
-          : 'Queued for code review',
+        : isBuildLoopback && review
+          ? `Returned ${sharpness.verified_blocking || 1} blocking finding(s) -> Build`
+          : cobaltActive
+            ? `Running${verifyCycle > 1 ? ` (Cycle ${verifyCycle})` : ''}: auditing diff against AC# & K#`
+            : 'Queued for code review',
     },
     ...(includeSentinel
       ? [
@@ -488,13 +801,19 @@ function inspectProjectBoard(projectDirectory, options = {}) {
             tier: state.tier,
             pct: sentinelDone ? 100 : sentinelActive ? 65 : 0,
             state: sentinelDone ? 'done' : sentinelActive ? 'active' : 'queued',
+            duration_ms: sentinelDurMs,
+            duration_label: formatDurationMs(sentinelDurMs),
+            started_at_ms: sentinelActive ? Math.round(reviewStartMs) : null,
+            cycle: verifyCycle,
             task: sentinelDone
               ? sensitiveSurface
                 ? 'Tenant isolation, SQL & money-math surface verified'
                 : 'Security invariant & boundary check complete'
-              : sentinelActive
-                ? 'Running: auditing sensitive surface & threat model'
-                : 'Queued for security audit',
+              : isBuildLoopback && sentinelHasOutput
+                ? 'Returned security finding(s) -> Build'
+                : sentinelActive
+                  ? `Running${verifyCycle > 1 ? ` (Cycle ${verifyCycle})` : ''}: auditing sensitive surface`
+                  : 'Queued for security audit',
           },
         ]
       : []),
@@ -509,32 +828,51 @@ function inspectProjectBoard(projectDirectory, options = {}) {
             tier: state.tier,
             pct: ralphDone ? 100 : ralphActive ? 55 : 0,
             state: ralphDone ? 'done' : ralphActive ? 'active' : 'queued',
-            task: tests
+            duration_ms: ralphDurMs,
+            duration_label: formatDurationMs(ralphDurMs),
+            started_at_ms: ralphActive ? Math.round(ralphStartMs) : null,
+            cycle: verifyCycle,
+            task: ralphDone
               ? 'tests.md · AC# regression suite passing'
-              : ralphActive
-                ? 'Running: executing targeted spec & regression suite'
-                : 'Queued for test verification',
+              : isBuildLoopback && tests
+                ? 'Returned test failure(s) -> Build'
+                : ralphActive
+                  ? `Running${verifyCycle > 1 ? ` (Cycle ${verifyCycle})` : ''}: executing targeted spec suite`
+                  : 'Queued for test verification',
           },
         ]
       : []),
   ];
 
-  function deriveCardStatus(cardAgents, cardPhases) {
+  function deriveCardStatus(cardId, cardAgents, cardPhases, cycleCount) {
     const base = phaseStatus(state.phase, state.status, cardPhases);
     const doneCount = cardAgents.filter((a) => a.state === 'done').length;
     const activeCount = cardAgents.filter((a) => a.state === 'active').length;
     const avgPct = Math.round(
       cardAgents.reduce((sum, a) => sum + (Number(a.pct) || 0), 0) / Math.max(1, cardAgents.length)
     );
-    if (base.state === 'done' || (doneCount === cardAgents.length && cardAgents.length > 0)) {
-      return { state: 'done', pct: 100, badge: '✓ done' };
+    if (cardId === 'verify' && (isBuildLoopback || isPlanLoopback)) {
+      return {
+        state: 'rework',
+        pct: 100,
+        badge: isPlanLoopback ? '↺ dispute -> plan' : '↺ rework -> build',
+      };
+    }
+    if (base.state === 'done' || (doneCount === cardAgents.length && cardAgents.length > 0 && activeCount === 0)) {
+      return {
+        state: 'done',
+        pct: 100,
+        badge: cycleCount > 1 ? `✓ done (${cycleCount}x)` : '✓ done',
+      };
     }
     if (base.state === 'active' || activeCount > 0) {
       const pct = Math.max(15, Math.min(95, avgPct || base.pct));
       const badge =
-        cardAgents.length > 1 && doneCount > 0
-          ? `● ${doneCount}/${cardAgents.length} done`
-          : `● ${state.phase.toLowerCase()}`;
+        cycleCount > 1
+          ? `↻ cycle ${cycleCount} · ${state.phase.toLowerCase()}`
+          : cardAgents.length > 1 && doneCount > 0
+            ? `● ${doneCount}/${cardAgents.length} done`
+            : `● ${state.phase.toLowerCase()}`;
       return { state: 'active', pct, badge };
     }
     return { state: 'queued', pct: 0, badge: '· queued' };
@@ -549,6 +887,13 @@ function inspectProjectBoard(projectDirectory, options = {}) {
     ? 0
     : allAgents.filter((a) => a.state === 'active').length;
 
+  const planStageDurMs = planAgents.reduce((sum, a) => sum + (a.duration_ms || 0), 0);
+  const buildStageDurMs = buildAgents.reduce((sum, a) => sum + (a.duration_ms || 0), 0);
+  const verifyParallelWaveMs = Math.max(cobaltDurMs, includeSentinel ? sentinelDurMs : 0);
+  const verifyStageDurMs = ralphSequentialStart
+    ? verifyParallelWaveMs + ralphDurMs
+    : Math.max(verifyParallelWaveMs, ralphDurMs);
+
   const cards = [
     {
       id: 'plan',
@@ -558,9 +903,13 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       model: profiles.peter.model,
       effort: profiles.peter.reasoning_effort,
       tier: state.tier,
+      cycle: planCycle,
+      duration_ms: planStageDurMs,
+      duration_label: formatDurationMs(planStageDurMs),
+      started_at_ms: planAgents.find((a) => a.state === 'active')?.started_at_ms || null,
       detail: `${acIds.length} AC · ${kIds.length} K constraints`,
       subdetail: dIds.length > 0 ? `traces ${dIds.length} D# decisions` : 'spec + K# contract',
-      ...deriveCardStatus(planAgents, ['DELIBERATE', 'INTAKE', 'PLAN']),
+      ...deriveCardStatus('plan', planAgents, ['DELIBERATE', 'INTAKE', 'PLAN'], planCycle),
       agents: planAgents,
     },
     {
@@ -571,12 +920,16 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       model: profiles.linus.model,
       effort: profiles.linus.reasoning_effort,
       tier: state.tier,
+      cycle: buildCycle,
+      duration_ms: buildStageDurMs,
+      duration_label: formatDurationMs(buildStageDurMs),
+      started_at_ms: buildAgents.find((a) => a.state === 'active')?.started_at_ms || null,
       detail:
         partition.mode === 'parallel_batches'
           ? `${partition.batches.length} isolated batches`
           : 'isolated implementation',
       subdetail: `${builtFilesCount || partition.file_count} file(s) in scope`,
-      ...deriveCardStatus(buildAgents, ['BUILD']),
+      ...deriveCardStatus('build', buildAgents, ['BUILD'], buildCycle),
       agents: buildAgents,
     },
     {
@@ -587,6 +940,10 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       model: `${profiles.cobalt.model}`,
       effort: profiles.cobalt.reasoning_effort,
       tier: state.tier,
+      cycle: verifyCycle,
+      duration_ms: verifyStageDurMs,
+      duration_label: formatDurationMs(verifyStageDurMs),
+      started_at_ms: verifyAgents.find((a) => a.state === 'active')?.started_at_ms || null,
       detail: review
         ? `${sharpness.verified_blocking}/${sharpness.submitted_blocking} blocking kept`
         : tests
@@ -596,10 +953,60 @@ function inspectProjectBoard(projectDirectory, options = {}) {
         sharpness.demoted_blocking > 0
           ? `${sharpness.demoted_blocking} nit(s) demoted`
           : 'cross-checks AC# & K#',
-      ...deriveCardStatus(verifyAgents, ['REVIEW', 'TEST']),
+      ...deriveCardStatus('verify', verifyAgents, ['REVIEW', 'TEST'], verifyCycle),
       agents: verifyAgents,
     },
   ];
+
+  const cardsWithTime = cards.filter((c) => c.duration_ms > 0);
+  const slowestCard =
+    cardsWithTime.length >= 2
+      ? cardsWithTime.reduce((best, c) => (c.duration_ms > best.duration_ms ? c : best), cardsWithTime[0])
+      : cardsWithTime[0] || null;
+  if (slowestCard && cardsWithTime.length >= 2) {
+    slowestCard.is_bottleneck = true;
+  }
+
+  const agentsWithTime = allAgents.filter((a) => a.duration_ms > 0);
+  const slowestAgent =
+    agentsWithTime.length >= 2
+      ? agentsWithTime.reduce((best, a) => (a.duration_ms > best.duration_ms ? a : best), agentsWithTime[0])
+      : agentsWithTime[0] || null;
+  if (slowestAgent && agentsWithTime.length >= 2) {
+    slowestAgent.is_bottleneck = true;
+  }
+
+  const totalDurationMs = planStageDurMs + buildStageDurMs + verifyStageDurMs;
+  const timing = {
+    total_ms: totalDurationMs,
+    total_label: formatDurationMs(totalDurationMs),
+    plan_ms: planStageDurMs,
+    plan_label: formatDurationMs(planStageDurMs),
+    build_ms: buildStageDurMs,
+    build_label: formatDurationMs(buildStageDurMs),
+    verify_ms: verifyStageDurMs,
+    verify_label: formatDurationMs(verifyStageDurMs),
+    bottleneck_stage: slowestCard ? slowestCard.title : null,
+    bottleneck_stage_label: slowestCard ? `${slowestCard.title} (${slowestCard.duration_label})` : '—',
+    bottleneck_agent: slowestAgent ? slowestAgent.name : null,
+    bottleneck_agent_label: slowestAgent ? `${slowestAgent.name} (${slowestAgent.duration_label})` : '—',
+    non_linear: {
+      active: isBuildLoopback || isPlanLoopback,
+      mode: isPlanLoopback ? 'dispute-to-plan' : isBuildLoopback ? 'rework-to-build' : null,
+      reason: isPlanLoopback
+        ? 'SPEC_DISPUTE'
+        : isBuildLoopback
+          ? telemetry.last_loopback?.reason || 'REQUEST_CHANGES'
+          : null,
+      total_loops: telemetry.loopbacks.length || (isBuildLoopback || isPlanLoopback ? 1 : 0),
+      cycles: {
+        plan: planCycle,
+        build: buildCycle,
+        verify: verifyCycle,
+      },
+      loopbacks: telemetry.loopbacks,
+    },
+  };
 
   const counts = {
     decisions: dIds.length,
@@ -614,7 +1021,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
     context_kb: contextKb,
   };
 
-  const sessionLog = buildSessionLog(projectDirectory, state, sharpness, profiles, counts, partition);
+  const sessionLog = buildSessionLog(projectDirectory, state, sharpness, profiles, counts, partition, timing);
 
   return {
     state,
@@ -622,6 +1029,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
     profiles,
     partition,
     counts,
+    timing,
     cards,
     session_log: sessionLog,
   };
@@ -865,25 +1273,40 @@ function renderHtmlDashboard(initialBoard) {
   /* Summary Metrics Bar */
   .metrics-bar {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     border-bottom: 1px solid var(--border);
     background: #0d1015;
   }
   .metric-cell {
-    padding: 8px 14px;
+    padding: 8px 12px;
     border-right: 1px solid var(--border);
+    min-width: 0;
   }
   .metric-cell:last-child { border-right: none; }
   .metric-label {
     font-size: 10px;
     color: var(--text-muted);
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .metric-val {
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 600;
     color: var(--text-main);
     margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .metric-sub {
+    font-size: 9.2px;
+    color: var(--text-muted);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* Main 2-Column Topology Grid */
@@ -1161,6 +1584,43 @@ function renderHtmlDashboard(initialBoard) {
   .phase-card.active {
     border-color: var(--border-active);
     border-top-color: var(--blue);
+  }
+  .phase-card.rework {
+    border-color: rgba(210, 153, 34, 0.55);
+    border-top-color: var(--amber);
+  }
+  .dur-pill, .ag-dur-pill {
+    font-size: 9.3px;
+    padding: 0.5px 4.5px;
+    border-radius: 3px;
+    background: #101318;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .dur-pill.bottleneck, .ag-dur-pill.bottleneck {
+    color: var(--amber);
+    border-color: rgba(210, 153, 34, 0.42);
+    background: rgba(210, 153, 34, 0.08);
+  }
+  .dur-pill.live, .ag-dur-pill.live {
+    color: var(--blue);
+    border-color: rgba(88, 166, 255, 0.42);
+  }
+  .cycle-pill {
+    font-size: 8.8px;
+    padding: 0.5px 4px;
+    border-radius: 3px;
+    color: var(--amber);
+    border: 1px solid rgba(210, 153, 34, 0.4);
+    background: rgba(210, 153, 34, 0.08);
+    white-space: nowrap;
+  }
+  .ag-right-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
   }
   .card-head {
     padding: 8px 9px 7px;
@@ -1466,18 +1926,27 @@ function renderHtmlDashboard(initialBoard) {
       <div class="metric-cell">
         <div class="metric-label">Current Stage</div>
         <div class="metric-val" id="kpi-phase">PLAN</div>
+        <div class="metric-sub mono" id="kpi-phase-sub">linear pass</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Stage Bottleneck</div>
+        <div class="metric-val" id="kpi-bottleneck">—</div>
+        <div class="metric-sub mono" id="kpi-stage-times">Plan — · Build — · Verify —</div>
       </div>
       <div class="metric-cell">
         <div class="metric-label">Contract Sharpness</div>
         <div class="metric-val" id="kpi-sharpness">1.00 (Sharp)</div>
+        <div class="metric-sub mono" id="kpi-sharpness-sub">spec + build + review</div>
       </div>
       <div class="metric-cell">
         <div class="metric-label">Completed Agents</div>
         <div class="metric-val" id="kpi-agents">0 / 6</div>
+        <div class="metric-sub mono" id="kpi-slowest-agent">slowest: —</div>
       </div>
       <div class="metric-cell">
         <div class="metric-label">Review Gate</div>
         <div class="metric-val" id="kpi-review">0 Blocking</div>
+        <div class="metric-sub mono" id="kpi-loops">0 rework loops</div>
       </div>
     </div>
 
@@ -1756,7 +2225,8 @@ function renderHtmlDashboard(initialBoard) {
         }
         let uPos = st.reveal < 1 ? Math.max(0, st.u - d.lag) : (st.u + d.offset - d.lag) % 1;
         if (uPos < 0) uPos += 1;
-        const pt = pathEl.getPointAtLength(uPos * len);
+        const uCoord = st.reverse ? 1 - uPos : uPos;
+        const pt = pathEl.getPointAtLength(uCoord * len);
         d.el.setAttribute('cx', pt.x.toFixed(1));
         d.el.setAttribute('cy', pt.y.toFixed(1));
         const edgeFade = uPos < 0.06 ? uPos / 0.06 : uPos > 0.92 ? (1 - uPos) / 0.08 : 1;
@@ -1791,7 +2261,10 @@ function renderHtmlDashboard(initialBoard) {
   }
 
   function applyStageVisuals(stageKey) {
-    Object.values(FLOW_STREAMS).forEach((s) => { s.active = false; });
+    Object.values(FLOW_STREAMS).forEach((s) => {
+      s.active = false;
+      s.reverse = false;
+    });
     [
       'path-bridge-top', 'path-thinker-gate', 'path-fanout-0', 'path-fanout-1',
       'path-fanout-2', 'path-bridge-mid', 'path-fanin-0', 'path-fanin-1',
@@ -1859,6 +2332,26 @@ function renderHtmlDashboard(initialBoard) {
       setWireState('path-bridge-mid', 'wire-active-green');
       if (gateNode) gateNode.className = 'gate-node gate-active';
       highlightCodeLines(['cl-verify-1', 'cl-verify-2', 'cl-verify-3']);
+    } else if (stageKey === 'rework-to-build') {
+      FLOW_STREAMS['fanout-2'].active = true;
+      FLOW_STREAMS['fanout-2'].reverse = true;
+      FLOW_STREAMS['fanout-1'].active = true;
+      FLOW_STREAMS['bridge-mid'].active = true;
+      setWireState('path-fanout-0', 'wire-done');
+      setWireState('path-fanin-0', 'wire-done');
+      setWireState('path-fanout-2', 'wire-active-amber wire-dashed');
+      setWireState('path-fanout-1', 'wire-active-amber');
+      setWireState('path-bridge-mid', 'wire-active-amber');
+      if (gateNode) gateNode.className = 'gate-node gate-active';
+      highlightCodeLines(['cl-build-1', 'cl-verify-1', 'cl-verify-2']);
+    } else if (stageKey === 'dispute-to-plan') {
+      FLOW_STREAMS['fanout-2'].active = true;
+      FLOW_STREAMS['fanout-2'].reverse = true;
+      FLOW_STREAMS['fanout-0'].active = true;
+      setWireState('path-fanout-2', 'wire-active-amber wire-dashed');
+      setWireState('path-fanout-0', 'wire-active-amber');
+      if (gateNode) gateNode.className = 'gate-node gate-active';
+      highlightCodeLines(['cl-plan-1', 'cl-plan-2', 'cl-verify-1']);
     } else if (stageKey === 'verify-handoff') {
       FLOW_STREAMS['fanin-2'].active = true;
       setWireState('path-fanout-0', 'wire-done');
@@ -1886,12 +2379,28 @@ function renderHtmlDashboard(initialBoard) {
 
   function dotClass(state) {
     if (state === 'done') return 'dot-done';
-    if (state === 'active') return 'dot-active';
+    if (state === 'active' || state === 'rework') return 'dot-active';
     return 'dot-queued';
   }
 
-  function stageKeyFromPhase(phase, status) {
+  function formatDurationClient(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) return '—';
+    const totalSec = Math.max(1, Math.round(ms / 1000));
+    if (totalSec < 60) return totalSec + 's';
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    if (mins < 60) {
+      return secs > 0 ? mins + 'm ' + String(secs).padStart(2, '0') + 's' : mins + 'm';
+    }
+    const hrs = Math.floor(mins / 60);
+    return hrs + 'h ' + (mins % 60) + 'm';
+  }
+
+  function stageKeyFromPhase(phase, status, timing) {
     if (phase === 'DELIVER' || status === 'complete') return 'signoff';
+    if (timing && timing.non_linear && timing.non_linear.active && timing.non_linear.mode) {
+      return timing.non_linear.mode;
+    }
     if (phase === 'REVIEW' || phase === 'TEST') return 'build-to-verify';
     if (phase === 'BUILD') return 'plan-to-build';
     if (phase === 'PLAN') return 'gate-to-plan';
@@ -1899,26 +2408,60 @@ function renderHtmlDashboard(initialBoard) {
   }
 
   function render(board, overrideStageKey) {
-    const { state, sharpness, counts, cards, profiles, partition, session_log } = board;
+    const { state, sharpness, counts, cards, profiles, partition, session_log, timing } = board;
     document.getElementById('win-title').textContent = state.slug;
 
+    const totalDurStr = timing && timing.total_ms > 0 ? ' &middot; ' + timing.total_label : '';
     setHtml(
       'top-banner',
-      counts.total_agents + ' agents &middot; ' + (counts.acceptance_criteria + counts.constraints) + ' rules'
+      counts.total_agents + ' agents &middot; ' + (counts.acceptance_criteria + counts.constraints) + ' rules' + totalDurStr
     );
 
     const isPlan = ['TRIAGE', 'DELIBERATE', 'INTAKE', 'PLAN'].includes(state.phase);
     const isMid = ['BUILD', 'REVIEW', 'TEST'].includes(state.phase);
     const isDone = state.phase === 'DELIVER' || state.status === 'complete';
 
-    setHtml('kpi-phase', state.phase);
+    const nl = (timing && timing.non_linear) || { active: false, total_loops: 0, cycles: { plan: 1, build: 1, verify: 1 } };
+    setHtml('kpi-phase', nl.active ? state.phase + ' <span class="c-amber">↺</span>' : state.phase);
+    setHtml(
+      'kpi-phase-sub',
+      nl.active
+        ? '↺ ' + (nl.reason || 'rework') + ' (Cycle ' + (nl.cycles.build || 2) + ')'
+        : nl.total_loops > 0
+          ? nl.total_loops + ' rework loop(s) resolved'
+          : 'linear pass'
+    );
+
+    setHtml(
+      'kpi-bottleneck',
+      timing && timing.bottleneck_stage
+        ? '<span class="c-amber">' + timing.bottleneck_stage_label + '</span>'
+        : '—'
+    );
+    setHtml(
+      'kpi-stage-times',
+      timing
+        ? 'P ' + timing.plan_label + ' · B ' + timing.build_label + ' · V ' + timing.verify_label
+        : 'Plan — · Build — · Verify —'
+    );
+
     setHtml('kpi-sharpness', sharpness.overall.toFixed(2) + ' (' + (sharpness.overall >= 0.8 ? 'Sharp' : 'Split') + ')');
     setHtml('kpi-agents', counts.completed_agents + ' / ' + counts.total_agents);
+    setHtml(
+      'kpi-slowest-agent',
+      timing && timing.bottleneck_agent ? 'slowest: ' + timing.bottleneck_agent_label : 'slowest: —'
+    );
     setHtml(
       'kpi-review',
       sharpness.demoted_blocking > 0
         ? sharpness.verified_blocking + ' Blocking · ' + sharpness.demoted_blocking + ' Demoted'
         : sharpness.verified_blocking + ' Blocking'
+    );
+    setHtml(
+      'kpi-loops',
+      nl.total_loops > 0
+        ? '<span class="c-amber">↺ ' + nl.total_loops + ' rework loop' + (nl.total_loops === 1 ? '' : 's') + '</span>'
+        : '0 rework loops'
     );
 
     document.getElementById('step-script').className = 'rail-step' + (isPlan ? ' active' : '');
@@ -1970,7 +2513,10 @@ function renderHtmlDashboard(initialBoard) {
           '<div class="agent-item" id="ag-item-' + c.id + '-' + aIdx + '">' +
             '<div class="agent-item-top">' +
               '<span class="agent-name-wrap"><i class="status-dot" id="ag-dot-' + c.id + '-' + aIdx + '"></i>' + ag.name + '</span>' +
-              '<span class="mono c-muted" id="ag-pct-' + c.id + '-' + aIdx + '">0%</span>' +
+              '<span class="ag-right-meta">' +
+                '<span class="ag-dur-pill mono" id="ag-dur-' + c.id + '-' + aIdx + '">—</span>' +
+                '<span class="mono c-muted" id="ag-pct-' + c.id + '-' + aIdx + '">0%</span>' +
+              '</span>' +
             '</div>' +
             '<div class="agent-role" id="ag-role-' + c.id + '-' + aIdx + '"></div>' +
             '<div class="agent-meta-row" id="ag-meta-' + c.id + '-' + aIdx + '"></div>' +
@@ -1987,8 +2533,10 @@ function renderHtmlDashboard(initialBoard) {
                   '<i class="status-dot" id="pcard-dot-' + c.id + '"></i>' +
                   '<span class="card-title">' + c.title + '</span>' +
                   '<span class="agent-count-pill">' + agents.length + (agents.length === 1 ? ' agent' : ' agents') + '</span>' +
+                  '<span class="cycle-pill mono" id="pcard-cycle-' + c.id + '" style="display:none"></span>' +
                 '</div>' +
                 '<div class="card-right-meta">' +
+                  '<span class="dur-pill mono" id="pcard-dur-' + c.id + '">—</span>' +
                   '<span class="mono" id="pcard-pct-' + c.id + '">0%</span>' +
                   '<span class="chevron" id="pcard-chev-' + c.id + '">▾</span>' +
                 '</div>' +
@@ -2009,12 +2557,42 @@ function renderHtmlDashboard(initialBoard) {
     }
 
     cards.forEach((c) => {
-      const stateCls = c.state === 'active' ? ' active' : c.state === 'done' ? ' done' : '';
+      const stateCls =
+        c.state === 'active'
+          ? ' active'
+          : c.state === 'rework'
+            ? ' rework'
+            : c.state === 'done'
+              ? ' done'
+              : '';
       const isOpen = Boolean(expandedGroups[c.id]);
       const cardEl = document.getElementById('pcard-' + c.id);
       if (cardEl) cardEl.className = 'phase-card' + stateCls;
       const dotEl = document.getElementById('pcard-dot-' + c.id);
       if (dotEl) dotEl.className = 'status-dot ' + dotClass(c.state);
+      const cycEl = document.getElementById('pcard-cycle-' + c.id);
+      if (cycEl) {
+        if ((c.cycle || 1) > 1) {
+          cycEl.style.display = 'inline-block';
+          cycEl.textContent = '↺ ' + c.cycle + 'x';
+        } else {
+          cycEl.style.display = 'none';
+        }
+      }
+      const durEl = document.getElementById('pcard-dur-' + c.id);
+      if (durEl) {
+        const isLive = c.state === 'active' && c.started_at_ms;
+        durEl.className =
+          'dur-pill mono' +
+          (isLive ? ' live' : c.is_bottleneck ? ' bottleneck' : '');
+        if (isLive && !simActive) {
+          durEl.setAttribute('data-started-at', String(c.started_at_ms));
+          durEl.textContent = '⏱ ' + formatDurationClient(Date.now() - c.started_at_ms);
+        } else {
+          durEl.removeAttribute('data-started-at');
+          durEl.textContent = c.duration_label || '—';
+        }
+      }
       const pctEl = document.getElementById('pcard-pct-' + c.id);
       if (pctEl) pctEl.textContent = Math.round(c.pct) + '%';
       const chevEl = document.getElementById('pcard-chev-' + c.id);
@@ -2041,17 +2619,36 @@ function renderHtmlDashboard(initialBoard) {
         if (agItem) agItem.className = 'agent-item' + agCls;
         const agDot = document.getElementById('ag-dot-' + c.id + '-' + aIdx);
         if (agDot) agDot.className = 'status-dot ' + dotClass(ag.state);
+        const agDur = document.getElementById('ag-dur-' + c.id + '-' + aIdx);
+        if (agDur) {
+          const isAgLive = ag.state === 'active' && ag.started_at_ms;
+          agDur.className =
+            'ag-dur-pill mono' +
+            (isAgLive ? ' live' : ag.is_bottleneck ? ' bottleneck' : '');
+          if (isAgLive && !simActive) {
+            agDur.setAttribute('data-started-at', String(ag.started_at_ms));
+            agDur.textContent = '⏱ ' + formatDurationClient(Date.now() - ag.started_at_ms);
+          } else {
+            agDur.removeAttribute('data-started-at');
+            agDur.textContent = ag.duration_label || '—';
+          }
+        }
         const agPct = document.getElementById('ag-pct-' + c.id + '-' + aIdx);
         if (agPct) agPct.textContent = Math.round(ag.pct) + '%';
         const agRole = document.getElementById('ag-role-' + c.id + '-' + aIdx);
         if (agRole) agRole.textContent = ag.role;
         const agMeta = document.getElementById('ag-meta-' + c.id + '-' + aIdx);
         if (agMeta) {
+          const cycChip =
+            (ag.cycle || 1) > 1
+              ? '<span class="meta-chip mono" style="color:var(--amber);border-color:rgba(210,153,34,0.4)">↺ cycle ' + ag.cycle + '</span>'
+              : '';
           setHtml(
             'ag-meta-' + c.id + '-' + aIdx,
             '<span class="meta-chip model mono">' + ag.model + '</span>' +
               '<span class="meta-chip mono">reasoning: ' + ag.effort + '</span>' +
-              '<span class="meta-chip mono">tier: ' + (ag.tier || state.tier) + '</span>'
+              '<span class="meta-chip mono">tier: ' + (ag.tier || state.tier) + '</span>' +
+              cycChip
           );
         }
         const agBar = document.getElementById('ag-bar-' + c.id + '-' + aIdx);
@@ -2085,7 +2682,7 @@ function renderHtmlDashboard(initialBoard) {
 
     setHtml('cmd-line', state.phase + ' · ' + (sharpness.effective_verdict || 'APPROVE'));
 
-    applyStageVisuals(overrideStageKey || stageKeyFromPhase(state.phase, state.status));
+    applyStageVisuals(overrideStageKey || stageKeyFromPhase(state.phase, state.status, timing));
   }
 
   function triggerSimulation() {
@@ -2100,22 +2697,23 @@ function renderHtmlDashboard(initialBoard) {
       fetch('/api/simulate', { method: 'POST' }).catch(() => {});
     }
 
-    const totalAgents = currentBoard.counts.total_agents || 6;
     const allLogs = [
-      { at: 0.1, time: '00:00.12', actor: 'vivaldi',    role: 'thinker',  text: 'Routing task to Plan group (Einstein + Peter)' },
-      { at: 0.8, time: '00:00.84', actor: 'einstein',   role: 'thinker',  text: 'brief.md complete · synthesized decisions D1..D3' },
-      { at: 2.1, time: '00:02.10', actor: 'peter',      role: 'thinker',  text: 'spec.md complete · locked AC1..AC3 + K1..K3 constraints' },
-      { at: 3.1, time: '00:03.15', actor: 'control.js', role: 'gate',     text: 'validate-handoff plan=PASS · spec_trace=1.00' },
-      { at: 4.1, time: '00:04.10', actor: 'linus',      role: 'builder',  text: 'Implementing 3 planned files in isolated builder lane' },
-      { at: 5.5, time: '00:05.50', actor: 'control.js', role: 'gate',     text: 'verify-build PASS · 0 unplanned files · syntax clean' },
-      { at: 6.5, time: '00:06.52', actor: 'cobalt',     role: 'verifier', text: 'Code review complete · 2 style notes demoted to minor' },
-      { at: 7.3, time: '00:07.30', actor: 'sentinel',   role: 'verifier', text: 'Security audit complete · tenant scope & SQL verified' },
-      { at: 8.2, time: '00:08.20', actor: 'ralph',      role: 'verifier', text: 'Test suite complete · 42 specs passing (94.2% coverage)' },
-      { at: 9.1, time: '00:09.10', actor: 'vivaldi',    role: 'thinker',  text: 'Delivery sign-off · 0 blocking findings' }
+      { at: 0.1, time: '00:00.12', actor: 'vivaldi',         role: 'thinker',  text: 'Routing task to Plan group (Einstein + Peter)' },
+      { at: 0.8, time: '00:00.84', actor: 'einstein',        role: 'thinker',  text: 'brief.md complete (38s) · synthesized decisions D1..D3' },
+      { at: 2.0, time: '00:02.00', actor: 'peter',           role: 'thinker',  text: 'spec.md complete (1m 04s) · locked AC1..AC3 + K1..K3' },
+      { at: 2.9, time: '00:02.90', actor: 'control.js',      role: 'gate',     text: 'validate-handoff plan=PASS · spec_trace=1.00' },
+      { at: 3.6, time: '00:03.60', actor: 'linus',           role: 'builder',  text: 'Cycle 1: implementing 3 planned files (3m 10s)' },
+      { at: 5.0, time: '00:05.00', actor: 'control.js',      role: 'gate',     text: 'verify-build PASS · dispatching Cobalt, Sentinel, Ralph' },
+      { at: 6.3, time: '00:06.30', actor: 'cobalt',          role: 'verifier', text: 'REQUEST_CHANGES (K3) · missing row lock on retry path' },
+      { at: 6.6, time: '00:06.60', actor: 'control.js',      role: 'gate',     text: '↺ REQUEST_CHANGES (REVIEW -> BUILD) · routed to Cycle 2' },
+      { at: 7.7, time: '00:07.70', actor: 'linus',           role: 'builder',  text: 'Cycle 2 rework complete (+48s) · row lock added' },
+      { at: 8.8, time: '00:08.80', actor: 'validate-review', role: 'verifier', text: 'Cycle 2 re-review PASS · 2 style notes demoted -> APPROVE' },
+      { at: 9.4, time: '00:09.40', actor: 'ralph',           role: 'verifier', text: 'Test suite complete (2m 42s) · 42 specs passing' },
+      { at: 10.0, time: '00:10.00', actor: 'vivaldi',        role: 'thinker',  text: 'Delivery sign-off · total 12m 04s (1 rework loop resolved)' }
     ];
 
     const startTs = performance.now();
-    const durationSec = 10.2;
+    const durationSec = 10.8;
 
     function tickSim(now) {
       const t = (now - startTs) / 1000;
@@ -2124,52 +2722,66 @@ function renderHtmlDashboard(initialBoard) {
       let phase = 'PLAN';
       let status = 'active';
       let stageKey = 'thinker';
-      let doneAgents = 0;
 
-      // Individual agent progress timelines
-      const einsteinPct = Math.round(clamp01((t - 0.3) / 1.3) * 100);
-      const peterPct = Math.round(clamp01((t - 1.5) / 1.7) * 100);
+      const einsteinPct = Math.round(clamp01((t - 0.2) / 1.1) * 100);
+      const peterPct = Math.round(clamp01((t - 1.2) / 1.5) * 100);
       const p0 = Math.round((einsteinPct + peterPct) / 2);
 
-      const linusPct = Math.round(clamp01((t - 3.9) / 1.9) * 100);
+      const isReworkWindow = t >= 6.5 && t < 7.9;
+      const buildCycle = t >= 6.5 ? 2 : 1;
+      const verifyCycle = t >= 7.9 ? 2 : 1;
+
+      const linusPct = isReworkWindow
+        ? Math.round(35 + clamp01((t - 6.5) / 1.3) * 65)
+        : t >= 7.9
+          ? 100
+          : Math.round(clamp01((t - 3.3) / 1.7) * 100);
       const p1 = linusPct;
 
-      const cobaltPct = Math.round(clamp01((t - 6.3) / 1.6) * 100);
-      const sentinelPct = Math.round(clamp01((t - 6.4) / 1.8) * 100);
-      const ralphPct = Math.round(clamp01((t - 6.5) / 2.0) * 100);
+      const cobaltPct = isReworkWindow
+        ? 100
+        : t >= 7.9
+          ? Math.round(40 + clamp01((t - 7.9) / 0.9) * 60)
+          : Math.round(clamp01((t - 5.3) / 1.2) * 100);
+      const sentinelPct = isReworkWindow
+        ? 100
+        : t >= 7.9
+          ? Math.round(50 + clamp01((t - 7.9) / 0.9) * 50)
+          : Math.round(clamp01((t - 5.4) / 1.2) * 100);
+      const ralphPct = t < 7.9
+        ? Math.round(clamp01((t - 5.5) / 1.0) * 65)
+        : Math.round(65 + clamp01((t - 8.0) / 1.4) * 35);
       const p2 = Math.round((cobaltPct + sentinelPct + ralphPct) / 3);
 
-      doneAgents =
-        (einsteinPct >= 100 ? 1 : 0) +
-        (peterPct >= 100 ? 1 : 0) +
-        (linusPct >= 100 ? 1 : 0) +
-        (cobaltPct >= 100 ? 1 : 0) +
-        (sentinelPct >= 100 ? 1 : 0) +
-        (ralphPct >= 100 ? 1 : 0);
+      const sSpec = Number(clamp01((t - 0.5) / 2.0).toFixed(2));
+      const sBuild = Number(clamp01((t - 3.3) / 1.7).toFixed(2));
+      const sRev = Number((t < 5.3 ? 0.0 : isReworkWindow ? 0.67 : clamp01((t - 5.3) / 3.5)).toFixed(2));
 
-      const sSpec = Number(clamp01((t - 0.6) / 2.2).toFixed(2));
-      const sBuild = Number(clamp01((t - 3.9) / 1.9).toFixed(2));
-      const sRev = Number((t < 6.3 ? 0.0 : clamp01((t - 6.3) / 2.1)).toFixed(2));
-
-      if (t < 1.3) {
+      if (t < 1.1) {
         phase = 'DELIBERATE';
         stageKey = 'thinker';
-      } else if (t < 3.3) {
+      } else if (t < 2.8) {
         phase = 'PLAN';
         stageKey = 'gate-to-plan';
-      } else if (t < 3.9) {
+      } else if (t < 3.3) {
         phase = 'BUILD';
         stageKey = 'plan-handoff';
-      } else if (t < 5.8) {
+      } else if (t < 5.0) {
         phase = 'BUILD';
         stageKey = 'plan-to-build';
-      } else if (t < 6.4) {
+      } else if (t < 5.4) {
         phase = 'REVIEW';
         stageKey = 'build-handoff';
-      } else if (t < 8.5) {
+      } else if (t < 6.5) {
         phase = 'REVIEW';
         stageKey = 'build-to-verify';
-      } else if (t < 9.0) {
+      } else if (t < 7.9) {
+        phase = 'BUILD';
+        stageKey = 'rework-to-build';
+      } else if (t < 9.3) {
+        phase = 'REVIEW';
+        stageKey = 'build-to-verify';
+      } else if (t < 9.8) {
         phase = 'TEST';
         stageKey = 'verify-handoff';
       } else {
@@ -2178,98 +2790,166 @@ function renderHtmlDashboard(initialBoard) {
         stageKey = 'signoff';
       }
 
+      const planMs = Math.round(clamp01((t - 0.2) / 2.5) * 102000);
+      const buildMs =
+        Math.round(clamp01((t - 3.3) / 1.7) * 190000) +
+        (t >= 6.5 ? Math.round(clamp01((t - 6.5) / 1.3) * 48000) : 0);
+      const verifyMs =
+        (t >= 5.3 ? Math.round(clamp01((t - 5.3) / 1.2) * 222000) : 0) +
+        (t >= 7.9 ? Math.round(clamp01((t - 7.9) / 1.6) * 162000) : 0);
+
       currentBoard.state.phase = phase;
       currentBoard.state.status = status;
-      currentBoard.counts.completed_agents = doneAgents;
-      currentBoard._simTraces = Math.round(clamp01(t / 2.5) * 9);
+      currentBoard._simTraces = Math.round(clamp01(t / 2.2) * 9);
       currentBoard.sharpness.spec_trace = sSpec;
       currentBoard.sharpness.build_scope = sBuild;
       currentBoard.sharpness.review_filter = sRev;
       currentBoard.sharpness.overall = Number(((sSpec + sBuild + sRev) / 3).toFixed(2));
       currentBoard.sharpness.label = currentBoard.sharpness.overall >= 0.8 ? 'sharp' : 'split';
-      currentBoard.sharpness.submitted_blocking = t >= 6.5 ? 2 : 0;
-      currentBoard.sharpness.verified_blocking = 0;
-      currentBoard.sharpness.demoted_blocking = t >= 7.8 ? 2 : t >= 7.1 ? 1 : 0;
+      currentBoard.sharpness.submitted_blocking = t >= 6.2 ? 3 : 0;
+      currentBoard.sharpness.verified_blocking = isReworkWindow ? 1 : 0;
+      currentBoard.sharpness.demoted_blocking = t >= 8.6 ? 2 : t >= 6.2 ? 1 : 0;
+      currentBoard.sharpness.effective_verdict = isReworkWindow ? 'REQUEST_CHANGES' : 'APPROVE';
 
-      // Update Plan card + Einstein & Peter
+      currentBoard.timing = {
+        total_ms: planMs + buildMs + verifyMs,
+        total_label: formatDurationClient(planMs + buildMs + verifyMs),
+        plan_ms: planMs,
+        plan_label: formatDurationClient(planMs),
+        build_ms: buildMs,
+        build_label: formatDurationClient(buildMs),
+        verify_ms: verifyMs,
+        verify_label: formatDurationClient(verifyMs),
+        bottleneck_stage: verifyMs >= buildMs && verifyMs > 0 ? 'Verify' : buildMs > planMs ? 'Build' : 'Plan',
+        bottleneck_stage_label:
+          verifyMs >= buildMs && verifyMs > 0
+            ? 'Verify (' + formatDurationClient(verifyMs) + ')'
+            : buildMs > planMs
+              ? 'Build (' + formatDurationClient(buildMs) + ')'
+              : 'Plan (' + formatDurationClient(planMs) + ')',
+        bottleneck_agent: verifyMs > 0 ? 'Cobalt' : buildMs > 0 ? 'Linus' : 'Peter',
+        bottleneck_agent_label:
+          verifyMs > 0
+            ? 'Cobalt (' + formatDurationClient(Math.round(verifyMs * 0.58)) + ')'
+            : buildMs > 0
+              ? 'Linus (' + formatDurationClient(buildMs) + ')'
+              : 'Peter (' + formatDurationClient(planMs) + ')',
+        non_linear: {
+          active: isReworkWindow,
+          mode: isReworkWindow ? 'rework-to-build' : null,
+          reason: isReworkWindow ? 'REQUEST_CHANGES' : null,
+          total_loops: t >= 6.5 ? 1 : 0,
+          cycles: { plan: 1, build: buildCycle, verify: verifyCycle },
+          loopbacks: t >= 6.5 ? [{ from: 'REVIEW', to: 'BUILD', reason: 'REQUEST_CHANGES', cycle: 2 }] : [],
+        },
+      };
+
       const planCard = currentBoard.cards[0];
       if (planCard) {
         planCard.pct = p0;
+        planCard.cycle = 1;
+        planCard.duration_ms = planMs;
+        planCard.duration_label = formatDurationClient(planMs);
+        planCard.is_bottleneck = false;
         planCard.state = p0 >= 100 ? 'done' : p0 > 0 ? 'active' : 'queued';
-        planCard.badge = p0 >= 100 ? 'Done' : peterPct > 0 ? 'Peter' : 'Einstein';
+        planCard.badge = p0 >= 100 ? '✓ done' : peterPct > 0 ? '● peter' : '● einstein';
         if (planCard.agents && planCard.agents[0]) {
-          planCard.agents[0].pct = einsteinPct;
-          planCard.agents[0].state = einsteinPct >= 100 ? 'done' : einsteinPct > 0 ? 'active' : 'queued';
-          planCard.agents[0].task = einsteinPct >= 100
-            ? 'brief.md · D1..D3 decisions locked'
-            : 'Synthesizing domain context & D1..D3';
+          planCard.agents[0].pct = planCard.agents.length === 1 ? peterPct : einsteinPct;
+          planCard.agents[0].state = planCard.agents[0].pct >= 100 ? 'done' : planCard.agents[0].pct > 0 ? 'active' : 'queued';
+          planCard.agents[0].duration_label = formatDurationClient(
+            planCard.agents.length === 1 ? planMs : Math.round(clamp01((t - 0.2) / 1.1) * 38000)
+          );
         }
         if (planCard.agents && planCard.agents[1]) {
           planCard.agents[1].pct = peterPct;
           planCard.agents[1].state = peterPct >= 100 ? 'done' : peterPct > 0 ? 'active' : 'queued';
-          planCard.agents[1].task = peterPct >= 100
-            ? 'spec.md · AC1..AC3 + K1..K3 locked'
-            : peterPct > 0
-              ? 'Compiling AC1..AC3 & K1..K3 constraints'
-              : 'Waiting on Einstein brief.md';
+          planCard.agents[1].duration_label = formatDurationClient(Math.round(clamp01((t - 1.2) / 1.5) * 64000));
         }
       }
 
-      // Update Build card + Linus
       const buildCard = currentBoard.cards[1];
       if (buildCard) {
-        const inTransit = t >= 3.4 && t < 3.9;
         buildCard.pct = p1;
-        buildCard.state = p1 >= 100 ? 'done' : p1 > 0 || inTransit ? 'active' : 'queued';
-        const filesDone = Math.max(1, Math.ceil((p1 / 100) * 3));
-        buildCard.badge = p1 >= 100 ? 'Done' : inTransit ? 'Receiving' : p1 > 0 ? filesDone + '/3 files' : 'Queued';
+        buildCard.cycle = buildCycle;
+        buildCard.duration_ms = buildMs;
+        buildCard.duration_label = formatDurationClient(buildMs);
+        buildCard.is_bottleneck = buildMs > planMs && buildMs > verifyMs;
+        buildCard.state = isReworkWindow ? 'active' : p1 >= 100 ? 'done' : p1 > 0 ? 'active' : 'queued';
+        buildCard.badge = isReworkWindow
+          ? '↻ cycle 2 · build'
+          : p1 >= 100
+            ? buildCycle > 1
+              ? '✓ done (2x)'
+              : '✓ done'
+            : p1 > 0
+              ? '● build'
+              : '· queued';
         if (buildCard.agents && buildCard.agents[0]) {
           buildCard.agents[0].pct = linusPct;
-          buildCard.agents[0].state = linusPct >= 100 ? 'done' : linusPct > 0 || inTransit ? 'active' : 'queued';
-          buildCard.agents[0].task = linusPct >= 100
-            ? 'build.md · 3 files patched & syntax clean'
-            : linusPct > 0
-              ? 'Patching file ' + filesDone + ' of 3 against K1..K3'
-              : 'Queued for spec gate';
+          buildCard.agents[0].cycle = buildCycle;
+          buildCard.agents[0].state = isReworkWindow ? 'active' : linusPct >= 100 ? 'done' : linusPct > 0 ? 'active' : 'queued';
+          buildCard.agents[0].duration_label = formatDurationClient(buildMs);
+          buildCard.agents[0].task = isReworkWindow
+            ? 'Cycle 2 (REQUEST_CHANGES): adding K3 DB row lock'
+            : linusPct >= 100
+              ? 'build.md · 3 file(s) patched' + (buildCycle > 1 ? ' (Cycle 2)' : '')
+              : 'Implementing 3 planned file(s)';
         }
       }
 
-      // Update Verify card + Cobalt, Sentinel, Ralph
       const verifyCard = currentBoard.cards[2];
       if (verifyCard) {
-        const inTransit = t >= 5.9 && t < 6.3;
         verifyCard.pct = p2;
-        verifyCard.state = p2 >= 100 ? 'done' : p2 > 0 || inTransit ? 'active' : 'queued';
-        const vDone = (cobaltPct >= 100 ? 1 : 0) + (sentinelPct >= 100 ? 1 : 0) + (ralphPct >= 100 ? 1 : 0);
-        verifyCard.badge = p2 >= 100 ? 'Done' : inTransit ? 'Receiving' : p2 > 0 ? vDone + '/3 done' : 'Queued';
+        verifyCard.cycle = verifyCycle;
+        verifyCard.duration_ms = verifyMs;
+        verifyCard.duration_label = formatDurationClient(verifyMs);
+        verifyCard.is_bottleneck = verifyMs >= buildMs && verifyMs > 0;
+        verifyCard.state = isReworkWindow
+          ? 'rework'
+          : p2 >= 100
+            ? 'done'
+            : p2 > 0
+              ? 'active'
+              : 'queued';
+        verifyCard.badge = isReworkWindow
+          ? '↺ rework -> build'
+          : p2 >= 100
+            ? verifyCycle > 1
+              ? '✓ done (2x)'
+              : '✓ done'
+            : p2 > 0
+              ? verifyCycle > 1
+                ? '↻ cycle 2 · review'
+                : '● review'
+              : '· queued';
         if (verifyCard.agents && verifyCard.agents[0]) {
           verifyCard.agents[0].pct = cobaltPct;
+          verifyCard.agents[0].cycle = verifyCycle;
+          verifyCard.agents[0].is_bottleneck = verifyMs > 0;
           verifyCard.agents[0].state = cobaltPct >= 100 ? 'done' : cobaltPct > 0 ? 'active' : 'queued';
-          verifyCard.agents[0].task = cobaltPct >= 100
-            ? 'review.md · 0 blocking, 2 style notes demoted'
-            : cobaltPct > 0
-              ? 'Checking diff against AC1..AC3 & K1..K3'
-              : 'Queued';
+          verifyCard.agents[0].duration_label = formatDurationClient(Math.round(verifyMs * 0.58));
+          verifyCard.agents[0].task = isReworkWindow
+            ? 'Returned 1 blocking finding (K3) -> Build'
+            : cobaltPct >= 100
+              ? 'review.md · 0 blocking, 2 style notes demoted'
+              : 'Auditing diff against AC# & K#';
         }
         if (verifyCard.agents && verifyCard.agents[1]) {
           verifyCard.agents[1].pct = sentinelPct;
+          verifyCard.agents[1].cycle = verifyCycle;
           verifyCard.agents[1].state = sentinelPct >= 100 ? 'done' : sentinelPct > 0 ? 'active' : 'queued';
-          verifyCard.agents[1].task = sentinelPct >= 100
-            ? 'Tenant scope & BigDecimal invariants verified'
-            : sentinelPct > 0
-              ? 'Auditing sensitive payment surface'
-              : 'Queued';
+          verifyCard.agents[1].duration_label = formatDurationClient(Math.round(verifyMs * 0.45));
         }
         if (verifyCard.agents && verifyCard.agents[2]) {
           verifyCard.agents[2].pct = ralphPct;
+          verifyCard.agents[2].cycle = verifyCycle;
           verifyCard.agents[2].state = ralphPct >= 100 ? 'done' : ralphPct > 0 ? 'active' : 'queued';
-          verifyCard.agents[2].task = ralphPct >= 100
-            ? 'tests.md · 42 specs passing (94.2%)'
-            : ralphPct > 0
-              ? 'Running payment_executor_spec.rb'
-              : 'Queued';
+          verifyCard.agents[2].duration_label = formatDurationClient(Math.round(verifyMs * 0.42));
         }
       }
+
+      const allSimAgents = currentBoard.cards.reduce((acc, c) => acc.concat(c.agents || []), []);
+      currentBoard.counts.completed_agents = allSimAgents.filter((a) => a.state === 'done').length;
 
       currentBoard.session_log = allLogs.filter((l) => l.at <= t).slice(-6);
       render(currentBoard, stageKey);
@@ -2380,6 +3060,18 @@ function renderHtmlDashboard(initialBoard) {
       requestAnimationFrame(syncSvgGeometry);
     }
   };
+
+  function tickLiveTimers() {
+    if (simActive) return;
+    const now = Date.now();
+    document.querySelectorAll('[data-started-at]').forEach((el) => {
+      const startMs = Number(el.getAttribute('data-started-at'));
+      if (Number.isFinite(startMs) && startMs > 0) {
+        el.textContent = '⏱ ' + formatDurationClient(Math.max(1000, now - startMs));
+      }
+    });
+  }
+  setInterval(tickLiveTimers, 1000);
 
   window.addEventListener('resize', fitViewport);
   initCometDom();
@@ -2775,7 +3467,7 @@ function ensureProjectWatcher(resolvedProjectDir, options = {}) {
     const check = () => {
       if (!fs.existsSync(path.join(dir, 'project.json'))) return cleanup();
       try {
-        const files = fs.readdirSync(dir).filter(f => (f.endsWith('.md') || f.endsWith('.json')) && !f.startsWith('.'));
+        const files = fs.readdirSync(dir).filter(f => (f.endsWith('.md') || f.endsWith('.json')) && !f.startsWith('.') && f !== 'telemetry.json');
         const sig = files.sort().map(f => {
           try { const st = fs.statSync(path.join(dir, f)); return f + ':' + st.mtimeMs + ':' + st.size; } catch { return f; }
         }).join('|');
@@ -2793,7 +3485,7 @@ function ensureProjectWatcher(resolvedProjectDir, options = {}) {
     const timer = setInterval(check, 750);
     try {
       fs.watch(dir, (ev, fname) => {
-        if (!fname || fname === 'dashboard.html' || fname === 'board-state.js' || fname.startsWith('.')) return;
+        if (!fname || fname === 'dashboard.html' || fname === 'board-state.js' || fname === 'telemetry.json' || fname.startsWith('.')) return;
         check();
       });
     } catch {}

@@ -82,30 +82,19 @@ Before finalizing, verify your own review:
 
 ### Independent Lint Verification (MANDATORY)
 
-Before reviewing code, run lint independently against pending working-tree changes before commit:
+Report the lint status in the `## Lint Check` section:
 
-```
-cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines
-```
+- Reuse the mechanical `verify-build` result (`gate-verify-build.json`) and Linus's reported lint output by default when they cover the current working tree.
+- If uncommitted Ruby (`.rb`) changes exist and `<workspace-root>/rubocop_changed_lines` is present, run `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` (or with `<SHA>` after commit) from the target Rails repository. Never search for or invoke `rubocop_changed_lines` in non-Ruby repositories.
+- Never run test suites (`npm test`, `vitest`, `rspec`) or repo-wide builds (`tsc`, `npm run build`) inside Cobalt when Ralph runs in parallel during Step 5 — Cobalt reviews the diff and contract compliance while Ralph executes tests.
 
-After committing, confirm that commit with `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines <SHA>`.
+### SonarQube / Coverage Gate
 
-**Worktree note**: The `rubocop_changed_lines` script lives at the workspace root. Run it from the target Rails repository so Git resolves that repository's working tree.
+In the `## Coverage Check` section:
 
-Report the result in the Lint Check section. Do not trust the builder's claim that lint passes — verify it yourself. **This step is non-negotiable — a review without lint verification is incomplete.**
-
-### SonarQube Code Coverage Gate (MANDATORY)
-
-After lint verification, check SonarQube code coverage for the changed files:
-
-1. Run the SonarQube coverage report for the branch/PR.
-2. Verify that overall code coverage for changed files is **>80%**.
-3. Report the result in the Coverage Check section of the output.
-
-**Enforcement:**
-- Coverage **>80%**: PASS — note the percentage in the Coverage Check section.
-- Coverage **≤80%**: Raise a **MAJOR** finding with category "Insufficient Test Coverage" listing the under-covered files and their percentages. This blocks APPROVE verdict.
-- If SonarQube is unavailable or the project is not configured for it, note this explicitly in the Coverage Check section and flag it as a **MINOR** finding ("SonarQube coverage data unavailable").
+1. **When Ralph runs in parallel (`Standard` and `Complex` tiers)**: Record `"Delegated to parallel Ralph verification"` in `## Coverage Check` and skip SonarQube/coverage commands completely (do not raise a MINOR finding for SonarQube unavailability when delegated to Ralph).
+2. **When Ralph does not run in parallel (`Lite` tier)**: If SonarQube coverage data is available for the branch/PR, verify that coverage for changed files is **>80%** (raise a **MAJOR** finding with category `"Insufficient Test Coverage"` if **≤80%**).
+- If SonarQube is unavailable or the project is not configured for it on a non-Ralph run, note this explicitly in the Coverage Check section and flag it as a **MINOR** finding ("SonarQube coverage data unavailable").
 
 ### Verdict Routing
 

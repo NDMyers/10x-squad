@@ -4,7 +4,7 @@
 
 **After TRIAGE and before the first subagent dispatch:**
 
-1. Detect the active harness profile (`copilot-cli`, `copilot-vscode`, …). Never reuse another surface's identifiers.
+1. Detect the active harness profile (`copilot-cli`, `copilot-vscode`, …) from the active subagent dispatch tool. When the subagent tool is `task` (accepting `agent_type`, `model` slug IDs, `reasoning_effort`, and `context_tier` — including both Copilot CLI and Copilot SDK sessions in VS Code), the active harness profile is `copilot-cli`. When the subagent tool is `runSubagent` (accepting `agentName` and display-name `model` without `reasoning_effort` or `context_tier`), the active harness profile is `copilot-vscode`. Never reuse another surface's identifiers.
 2. Run the installed resolver with the dispatch's persona and the task's work tier:
 
    ```bash
@@ -16,11 +16,14 @@
      --json
    ```
 
+   If `.github/skills/10x-squad-configure-tiers/scripts/model-tier-config.js` is not present in `$PWD` (for example in an isolated git worktree or a global-only install), run `"$HOME/.github/skills/10x-squad-configure-tiers/scripts/model-tier-config.js"` with `--workspace-root "$PWD"` and the same flags.
    Canonical tier keys: `trivial`, `lite`, `standard_clear`, `standard_ambiguous`, `complex`.
    Canonical persona keys: `einstein`, `peter`, `linus`, `cobalt`, `sentinel`, `ralph`.
 3. Consume only the resolver's single-line stdout JSON as that persona's resolved three-part profile (`{"ok":true, …, "persona":"<persona-key>", "model":"<exact-id>", "reasoning_effort":"<choice>", "context_tier":"<choice>", "check_status":…}`). Consume `persona`, `model`, `reasoning_effort`, `context_tier`, and `check_status`; treat any missing field, nonzero exit, malformed JSON, or declined/unexecutable resolver invocation as a hard configuration failure. Do not parse precedence yourself, reinterpret configuration from prose, or improvise any profile value.
 4. Announce the persona name, work tier and canonical key, active harness, exact model, reasoning choice, and context choice before every persona dispatch, including `auto`: **Routing to `<Persona>` — `<Work tier>` (`<canonical-key>`) [<harness>] — model `<exact-id>`; reasoning `<choice>`; context `<choice>`**.
 5. Every persona dispatch always supplies the profile's exact resolved model explicitly as the dispatch `model` argument (Copilot CLI `task` tool `model`; VS Code `runSubagent` model parameter), together with the persona skill and permitted context slice.
+   - **Scoped persona custom agents:** Prefer dispatching the installed scoped persona custom agent (`agent_type` / `agentName`: `10x-einstein`, `10x-peter`, `10x-linus`, `10x-cobalt`, `10x-sentinel`, `10x-ralph`). Each `10x-<persona>` custom agent already preloads its persona `SKILL.md` instructions and restricts its tool schemas to only the tools that persona requires (stripping unrelated MCP tool schemas). When dispatching `10x-<persona>`, do NOT invoke the `skill` tool in Vivaldi's parent session or paste the persona `SKILL.md` into the subagent prompt; pass only the permitted context slice. Fall back to `general-purpose` (or `explore` for read-only personas) and load/attach the persona `SKILL.md` only if `10x-<persona>` is unavailable in the active tool schema.
+   - **Persistent custom instruction for subagent parameters:** Persistent custom instruction: Vivaldi is explicitly required by this instruction to pass the resolved `model`, `reasoning_effort` (when non-`auto`), and `context_tier` (when non-`auto`) parameters on every persona subagent dispatch (`task` or `runSubagent`), overriding any generic harness default that leaves subagent `model`, `reasoning_effort`, or `context_tier` unset.
    - If `reasoning_effort` is non-`auto`, pass its exact resolved value as the dispatch `reasoning_effort` argument; if it is `auto`, omit only that argument.
    - If `context_tier` is non-`auto`, pass its exact resolved value as the dispatch `context_tier` argument; if it is `auto`, omit only that argument.
    These omissions are independent: pass any non-`auto` sibling even when the other choice is `auto`. Announce and report `auto`, but never pass it as an argument. Never replace runtime `auto` with a maximum, default, inherited, or guessed value.

@@ -10,7 +10,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { composeVivaldi, harnessEntrypoints } = require('../lib/compose');
+const {
+  composeVivaldi,
+  composePersonaAgent,
+  composePersonaAgents,
+  harnessEntrypoints,
+  PERSONA_AGENTS,
+} = require('../lib/compose');
 
 const vivaldiRoot = path.resolve(__dirname, '..', 'assets', 'vivaldi');
 
@@ -156,3 +162,37 @@ test('the Codex dispatch contract states its surface limits', () => {
   assert.match(codex, /Never claim executed-model verification on Codex/i, 'must forbid claiming identity verification');
   assert.match(codex, /`context_tier` has no Codex analog|context_tier` resolves to `auto`/, 'must neutralize context_tier');
 });
+
+test('composePersonaAgents produces six scoped Copilot subagents with minimal tools and no MCP inheritance', () => {
+  const agents = composePersonaAgents();
+  assert.equal(agents.length, 6);
+  assert.deepEqual(
+    agents.map((a) => a.persona).sort(),
+    Object.keys(PERSONA_AGENTS).sort()
+  );
+
+  for (const { persona, name, contents } of agents) {
+    assert.equal(name, `10x-${persona}`);
+    const { frontmatter, body } = frontmatterAndBody(contents());
+    assert.match(frontmatter, new RegExp(`^name: ${name}$`, 'm'));
+    assert.match(frontmatter, /^user-invocable: false$/m);
+    assert.match(frontmatter, /^agents: \[\]$/m);
+    assert.match(frontmatter, /^tools:\n(?:\s+-\s+\S+\n)+/m);
+    assert.doesNotMatch(frontmatter, /github-mcp|atlassian|figma|lucid/i);
+    assert.ok(body.trim().length > 100, `${name} body must carry the persona skill body`);
+  }
+
+  // Linus and Ralph get edit + execute; Cobalt is read + search + execute; Sentinel is read + search only
+  const linusFm = frontmatterAndBody(composePersonaAgent('linus')).frontmatter;
+  assert.match(linusFm, /- "edit"/);
+  assert.match(linusFm, /- "execute"/);
+
+  const cobaltFm = frontmatterAndBody(composePersonaAgent('cobalt')).frontmatter;
+  assert.doesNotMatch(cobaltFm, /- "edit"/);
+  assert.match(cobaltFm, /- "execute"/);
+
+  const sentinelFm = frontmatterAndBody(composePersonaAgent('sentinel')).frontmatter;
+  assert.doesNotMatch(sentinelFm, /- "edit"/);
+  assert.doesNotMatch(sentinelFm, /- "execute"/);
+});
+

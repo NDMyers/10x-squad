@@ -34,7 +34,7 @@ function walkFiles(dir) {
   return out;
 }
 
-const { composeVivaldi } = require('../lib/compose');
+const { composeVivaldi, composePersonaAgents } = require('../lib/compose');
 const { detectShadowedSkills, installTenXSquad } = require('../lib/installer');
 
 // Same CLI-style args as runCli, but returns the structured install result so
@@ -63,6 +63,10 @@ function skillAssets(skillsRoot) {
 const harnessAssets = {
   copilot: [
     { contents: () => composeVivaldi('copilot'), target: path.join('.github', 'agents', '10x-squad.agent.md') },
+    ...composePersonaAgents().map((agent) => ({
+      contents: agent.contents,
+      target: path.join('.github', 'agents', `${agent.name}.agent.md`),
+    })),
     ...skillAssets(path.join('.github', 'skills')),
   ],
   codex: [
@@ -317,6 +321,15 @@ test('a single-harness install reports the other root left behind at an older re
     [[skillRoots.copilot, true], [skillRoots.codex, false]]
   );
 });
+
+test('copilotHomeMirrorAssets mirrors .github/agents/*.agent.md to .copilot/agents/*.agent.md', () => {
+  const { copilotHomeMirrorAssets } = require('../lib/installer');
+  const mirrored = copilotHomeMirrorAssets();
+  assert.equal(mirrored.length, 7);
+  assert.ok(mirrored.some((a) => a.target === path.join('.copilot', 'agents', '10x-squad.agent.md')));
+  assert.ok(mirrored.some((a) => a.target === path.join('.copilot', 'agents', '10x-linus.agent.md')));
+});
+
 
 test('reinstalling every harness clears a previously shadowed skill', () => {
   const workspace = makeTempDir();
