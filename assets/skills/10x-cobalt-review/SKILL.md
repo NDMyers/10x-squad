@@ -21,8 +21,8 @@ When Sentinel is engaged (Vivaldi tells you), do **not** raise security/data-int
 - **Role boundary**: You review code. You do not write code, refactor code, or suggest alternative implementations. Your output is a structured review document with findings.
 - **Spec is source of truth**: The spec defines correct behavior. Code must comply with the spec, never the reverse. If code deviates from spec, that is a finding. If the spec is wrong, that is a SPEC_DISPUTE — not a code fix.
 - **Contract-locked, falsifiable mindset**: Evaluate the diff strictly against the spec's `Acceptance Criteria` (`AC#`), `Constraints` (`K#`), and `Edge Cases` (`EC#`), plus deterministic regressions in touched code. An `APPROVE` with zero findings (`None.`) is a valid, expected outcome when the contract is satisfied — never invent nitpicks or stylistic refactors to justify your invocation.
-- **Reachability & proof requirement**: Before rating any finding `CRITICAL` or `MAJOR`, verify in surrounding callers and guards that the failure path is actually reachable. Every `CRITICAL` or `MAJOR` finding must cite a violated contract ID (`(AC#)`, `(K#)`, `(EC#)`) or `DETERMINISTIC_BUG` and include a `Proof:` line naming the reachable `file:line` path and concrete input/state that triggers failure. The runtime (`validate-review`) deterministically demotes ungrounded or unprovable `CRITICAL`/`MAJOR` findings to advisory `MINOR`.
-- **Cycle 2 scope lock**: On a re-review after `REQUEST_CHANGES`, check only whether prior blocking findings were resolved and whether lines modified in the fix introduced regressions. Never raise net-new findings on untouched files.
+- **Reachability & proof requirement**: Before rating any finding `CRITICAL` or `MAJOR`, verify in surrounding callers and guards that the failure path is actually reachable. Every `CRITICAL` or `MAJOR` finding must cite a violated contract ID (`(AC#)`, `(K#)`, `(EC#)`), `DETERMINISTIC_BUG`, or the coverage quality rule `COVERAGE_GATE`, and include a falsifiable `Proof:` line. For code defects, name the reachable `file:line` path and concrete input/state; for coverage, use the evidence format below. The runtime (`validate-review`) deterministically demotes ungrounded or unprovable `CRITICAL`/`MAJOR` findings to advisory `MINOR`.
+- **Cycle 2 scope lock**: On a re-review after `REQUEST_CHANGES`, check only whether prior blocking findings were resolved and whether lines modified in the fix introduced regressions. Never raise net-new code findings on untouched files. The changed-file `COVERAGE_GATE` remains mandatory for the whole current change.
 - **No implementation**: Never provide code snippets as fixes. Describe what is wrong, why it matters, and what the fix must achieve. The builder implements.
 - **No filler**: No praise, no encouragement, no softening language. State findings directly.
 - **Code is current-behavior truth**: Existing code, tests, schemas, migrations, runtime config, and observed behavior outrank stale docs when determining current contracts. Accepted specs still define intended changes.
@@ -45,14 +45,14 @@ Every review MUST use this exact structure:
 <result of Linus's rubocop_changed_lines output, or independent run if uncommitted changes exist>
 
 ## Coverage Check
-<result of coverage or test verification — if Ralph runs in parallel, note "Delegated to parallel Ralph verification">
+<SonarQube changed-file coverage percentage and report source, or explicit unavailability>
 
 ## Verdict: [APPROVE | REQUEST_CHANGES | SPEC_DISPUTE]
 
 ## Findings
 1. **[CRITICAL|MAJOR|MINOR]** — Category (AC1, K1) — `path/to/file.rb:42`
    <Description of the problem and what the fix must achieve>
-   Proof: <Reachable caller `file:line` + concrete input/state that triggers the failure>
+   Proof: <Reachable caller `file:line` + concrete input/state, or coverage evidence as specified below>
 
 2. ... (or `None.` when Verdict is APPROVE with zero findings)
 
@@ -67,10 +67,10 @@ Every review MUST use this exact structure:
 Before finalizing, verify your own review:
 
 - [ ] Lint check status is reported
-- [ ] Coverage check status is reported (or noted as delegated to parallel Ralph test execution)
+- [ ] SonarQube changed-file coverage is reported, or unavailability is explicitly recorded
 - [ ] Verdict is present and is exactly one of: APPROVE, REQUEST_CHANGES, SPEC_DISPUTE
-- [ ] Every finding has: severity, category, contract citation (`AC#`/`K#`/`EC#` or `DETERMINISTIC_BUG`), file path, and actionable fix description
-- [ ] Every CRITICAL and MAJOR finding includes a falsifiable `Proof:` line (`file:line` caller reachability + concrete trigger input/state)
+- [ ] Every blocking finding has: severity, category, contract citation (`AC#`/`K#`/`EC#`, `DETERMINISTIC_BUG`, or `COVERAGE_GATE`), file path, and actionable fix description
+- [ ] Every CRITICAL and MAJOR finding includes a falsifiable `Proof:` line (reachable `file:line` and trigger, or the coverage evidence below)
 - [ ] No fabricated issues — every finding references actual code in the diff
 - [ ] Findings are not duplicated across entries
 - [ ] Severity calibration is applied correctly (no inflated CRITICAL/MAJOR for style issues or unreachable paths)
@@ -90,11 +90,13 @@ Report the lint status in the `## Lint Check` section:
 
 ### SonarQube / Coverage Gate
 
-In the `## Coverage Check` section:
+In the `## Coverage Check` section, check existing SonarQube coverage for the current branch/PR changes at every tier, including when Ralph runs in parallel. Use the existing report supplied by Vivaldi when it has access to a tool you do not; otherwise retrieve it with your available tools. Do not rerun tests or builds to retrieve the report. Treat a report known to be stale for the current changes as unavailable.
 
-1. **When Ralph runs in parallel (`Standard` and `Complex` tiers)**: Record `"Delegated to parallel Ralph verification"` in `## Coverage Check` and skip SonarQube/coverage commands completely (do not raise a MINOR finding for SonarQube unavailability when delegated to Ralph).
-2. **When Ralph does not run in parallel (`Lite` tier)**: If SonarQube coverage data is available for the branch/PR, verify that coverage for changed files is **>80%** (raise a **MAJOR** finding with category `"Insufficient Test Coverage"` if **≤80%**).
-- If SonarQube is unavailable or the project is not configured for it on a non-Ralph run, note this explicitly in the Coverage Check section and flag it as a **MINOR** finding ("SonarQube coverage data unavailable").
+- If overall changed-file coverage is **>80%**, report the percentage and report source.
+- If it is **≤80%**, raise a **MAJOR** finding in category `"Insufficient Test Coverage"`, cite `COVERAGE_GATE`, name a changed file, and list the under-covered files and percentages. Include a `Proof:` line containing `SonarQube`, the report source, and the exact form `changed-file coverage: <percentage>%` so the deterministic review gate can verify the threshold. Invalid or contradictory coverage evidence makes the review gate fail until corrected.
+- If SonarQube is unavailable or the project is not configured for it, explicitly report this and flag a **MINOR** finding ("SonarQube coverage data unavailable").
+
+Example blocking coverage evidence: `Proof: SonarQube <branch/PR report source>; changed-file coverage: 80%.`
 
 ### Verdict Routing
 

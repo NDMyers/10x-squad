@@ -322,12 +322,15 @@ test('a single-harness install reports the other root left behind at an older re
   );
 });
 
-test('copilotHomeMirrorAssets mirrors .github/agents/*.agent.md to .copilot/agents/*.agent.md', () => {
+test('copilotHomeMirrorAssets mirrors agents and complete skills to .copilot', () => {
   const { copilotHomeMirrorAssets } = require('../lib/installer');
   const mirrored = copilotHomeMirrorAssets();
-  assert.equal(mirrored.length, 7);
+  assert.equal(mirrored.length, 7 + skillAssets(path.join('.copilot', 'skills')).length);
   assert.ok(mirrored.some((a) => a.target === path.join('.copilot', 'agents', '10x-squad.agent.md')));
   assert.ok(mirrored.some((a) => a.target === path.join('.copilot', 'agents', '10x-linus.agent.md')));
+  assert.ok(mirrored.some((a) => a.target === path.join(
+    '.copilot', 'skills', '10x-squad-configure-tiers', 'scripts', 'model-tier-config.js'
+  )));
 });
 
 

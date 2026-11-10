@@ -58,12 +58,12 @@ The squad maintains an unbroken decision chain via trace IDs:
 - **Einstein** assigns `D1..Dn` to every decision/assumption in his brief (Decision Table).
 - **Peter** must **consume or explicitly defer** every `D#`, assigns `AC1..ACn` to acceptance criteria, and compiles negative/security invariants into `## Constraints` (`K1..Kn`) whenever applicable. Each AC and K constraint tags its source decision: `(AC1 ← D2)`, `(K1 ← D2)`.
 - **Linus** cites the `AC#` and `K#` (plus `D#` where relevant) each changelist entry satisfies.
-- **Cobalt and Sentinel** lock blocking review findings to `AC#`, `K#`, `EC#`, or `DETERMINISTIC_BUG` with falsifiable `Proof:` lines (`file:line` + trigger).
+- **Cobalt and Sentinel** lock blocking review findings to `AC#`, `K#`, `EC#`, or `DETERMINISTIC_BUG` with falsifiable `Proof:` lines (`file:line` + trigger). Cobalt may instead cite `COVERAGE_GATE` with the SonarQube evidence format in its skill.
 - **Ralph** cites the `AC#` each test exercises.
 
 For a task with an Einstein brief, pass Peter the exact `brief.md` artifact rather than reconstructing its Decision Table in Vivaldi's payload. This makes INTAKE→PLAN a pointer handoff with no model-transcribed ID list.
 
-Run each command from the workspace root (if `.10x-squad/runtime/control.js` is not present in `$PWD`, such as in an isolated git worktree or a global-only install, run `"$HOME/.10x-squad/runtime/control.js"` with the same arguments). Omit `--brief` when no Einstein brief exists.
+Run each command from the workspace root (if `.10x-squad/runtime/control.js` is not present in `$PWD`, such as in an isolated git worktree or a global-only install, run `node "$HOME/.10x-squad/runtime/control.js"` with the same arguments). Omit `--brief` when no Einstein brief exists.
 
 **PLAN → BUILD:**
 
@@ -211,8 +211,8 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 **Sentinel engagement:** If tier is **Complex** OR the diff touches a **sensitive surface** (Peter's `## Sensitive Surface` section is present, or Vivaldi detects auth/payments/migrations/external-input/PII in the diff), dispatch the dedicated `10x-sentinel` custom agent (or load `10x-sentinel-review` only when dispatching a generic subagent) and run Sentinel **in parallel with Cobalt** in a separate context. Cobalt and Sentinel own disjoint domains — Cobalt never raises security findings when Sentinel is engaged, and Sentinel never raises style/logic findings.
 
-1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section. For Standard and Complex tasks, you may dispatch Ralph (Step 6) concurrently in the same parallel verification wave as Cobalt/Sentinel so review and test execution overlap in wall-clock time; keep their context slices strictly separate per the Context Visibility Matrix.
-2. **Lint & test deduplication:** Reuse the `verify-build` syntax/scope output and Linus's lint report from Step 4 unless uncommitted working-tree edits exist. When Ralph runs concurrently in the parallel verification wave, Ralph owns test execution exclusively — Cobalt and Sentinel must NOT run test suites or build commands.
+1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If an existing SonarQube report for the current changes is accessible only through a tool unavailable to scoped Cobalt, retrieve it and pass Cobalt the report, source, and analyzed revision; do not rerun tests to obtain it. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section. For Standard and Complex tasks, you may dispatch Ralph (Step 6) concurrently in the same parallel verification wave as Cobalt/Sentinel so review and test execution overlap in wall-clock time; keep their context slices strictly separate per the Context Visibility Matrix.
+2. **Lint & test deduplication:** Reuse the `verify-build` syntax/scope output and Linus's lint report from Step 4 unless uncommitted working-tree edits exist. When Ralph runs concurrently in the parallel verification wave, Ralph owns test execution exclusively — Cobalt and Sentinel must NOT run test suites or build commands. Cobalt still checks any existing SonarQube changed-file coverage report without rerunning tests.
 3. **Deterministic review filtering & verdict routing:** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged), then run the deterministic review gate before acting on any finding:
 
    ```
@@ -263,6 +263,8 @@ Concise summary (3–5 lines): what was built, files changed, test results, know
 | **Cobalt** | Arch Decision Brief only | Lean spec (Appendix on SPEC_DISPUTE) | Changed files | Own | Never | Never | Never |
 | **Sentinel** | Brief Appendix on SPEC_DISPUTE only | Lean spec + Sensitive Surface section | Changed files | Never | Never | Never | Never |
 | **Ralph** | Never | AC + Edge Cases only | Changed files | Never | Own | Never | Never |
+
+Cobalt may also receive the existing SonarQube coverage report and its source/revision; this is not Ralph's test report.
 
 **Violating this matrix degrades output quality.**
 
@@ -357,9 +359,11 @@ node .10x-squad/runtime/control.js advance-phase \
    --project 10x-squad-artifacts/projects/{task-slug} \
    --to <PLAN|BUILD|REVIEW|TEST|DELIVER> \
    [--repo-root "$PWD"] \
-   [--workspace-root "$PWD"] \
-   [--harness <surface>]
+   --workspace-root "$PWD" \
+   --harness <surface>
 ```
+
+With `--harness`, missing, invalid, or unresolved persona routing fails before changing `project.json`; inspect `next_dispatches` and configure or reinstall the resolver. The `--harness` flag may be omitted only when next-persona resolution is not required.
 
 When `advance-phase` returns `builder_partition.mode: "parallel_batches"` (`>= 4` files across `>= 2` 100%-disjoint file communities), you may dispatch parallel `Linus` builders on those disjoint file sets; otherwise (`"single_builder"`), dispatch a single `Linus` builder to preserve seam integrity.
 

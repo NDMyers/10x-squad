@@ -1,13 +1,13 @@
 'use strict';
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { validateHandoff } = require('./handoff-validator');
 const { validateReview } = require('./review-validator');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
 const { generateRegistry, transitionProject } = require('./project-state');
 const { inspectProjectBoard, syncProjectDashboard } = require('./workflow-board');
+const { loadModelTierConfig, resolvePersonaProfile } = require('./model-resolver');
 
 function nextTimestamp(previousIso) {
   const now = Date.now();
@@ -24,9 +24,11 @@ function defaultNextAction(targetPhase, tier, sensitiveSurface) {
     return 'Dispatch Linus with the validated spec contract.';
   }
   if (targetPhase === 'REVIEW') {
-    const verifiers = sensitiveSurface || tier === 'complex'
-      ? 'Cobalt, Sentinel, and Ralph'
-      : 'Cobalt and Ralph';
+    const names = personasForPhase(targetPhase, tier, sensitiveSurface)
+      .map((persona) => persona[0].toUpperCase() + persona.slice(1));
+    const verifiers = names.length > 2
+      ? `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`
+      : names.join(' and ');
     return `Dispatch ${verifiers} in the verification wave.`;
   }
   if (targetPhase === 'TEST') {
@@ -69,55 +71,18 @@ function resolveNextDispatches({ workspaceRoot, harness, tier, personas }) {
     return undefined;
   }
 
-  let modelTierConfig;
-  try {
-    modelTierConfig = require('../skills/10x-squad-configure-tiers/scripts/model-tier-config');
-  } catch {
-    const home = os.homedir();
-    const relScript = path.join('skills', '10x-squad-configure-tiers', 'scripts', 'model-tier-config.js');
-    const candidates = [
-      ...(workspaceRoot
-        ? [
-            path.join(workspaceRoot, '.github', relScript),
-            path.join(workspaceRoot, '.agents', relScript),
-          ]
-        : []),
-      path.join(__dirname, '..', '..', '.github', relScript),
-      path.join(__dirname, '..', '..', '.agents', relScript),
-      ...(home
-        ? [
-            path.join(home, '.github', relScript),
-            path.join(home, '.agents', relScript),
-          ]
-        : []),
-    ];
-    const fallbackPath = candidates.find((candidate) => fs.existsSync(candidate));
-    if (fallbackPath) {
-      modelTierConfig = require(fallbackPath);
-    }
-  }
-
-  if (!modelTierConfig || typeof modelTierConfig.resolveEffectiveProfile !== 'function') {
-    return undefined;
+  const loader = loadModelTierConfig({ workspaceRoot, harness });
+  if (!loader.ok) {
+    return { ok: false, code: loader.code, errors: [loader.message] };
   }
 
   const dispatches = [];
   for (const persona of personas) {
-    const resolved = modelTierConfig.resolveEffectiveProfile({
-      workspaceRoot: workspaceRoot || process.cwd(),
-      harness,
-      tier,
-      persona,
-    });
+    const resolved = resolvePersonaProfile({ config: loader.config, workspaceRoot, harness, tier, persona });
     if (!resolved.ok) {
-      return {
-        ok: false,
-        persona,
-        code: resolved.code,
-        errors: resolved.errors,
-      };
+      return resolved;
     }
-    dispatches.push(resolved.result);
+    dispatches.push(resolved.profile);
   }
   return { ok: true, profiles: dispatches };
 }
@@ -255,6 +220,22 @@ function advancePhase({
           errors: reviewValidation.errors,
         };
       }
+      const requiredPhase = reviewValidation.effective_verdict === 'REQUEST_CHANGES' ? 'BUILD'
+        : reviewValidation.effective_verdict === 'SPEC_DISPUTE' ? 'PLAN'
+          : null;
+      if (requiredPhase && targetPhase !== requiredPhase && targetPhase !== 'REVIEW') {
+        return {
+          ok: false,
+          phase: currentState.phase,
+          target_phase: targetPhase,
+          review_validation: reviewValidation,
+          errors: [{
+            code: 'REVIEW_VERDICT_PHASE_MISMATCH',
+            verdict: reviewValidation.effective_verdict,
+            required_phase: requiredPhase,
+          }],
+        };
+      }
     }
   }
 
@@ -266,6 +247,31 @@ function advancePhase({
 
   const sensitiveSurface = spec ? /##\s+Sensitive Surface\b/.test(spec) : false;
   const isDeliver = targetPhase === 'DELIVER';
+  const nextPersonas = personasForPhase(targetPhase, currentState.tier, sensitiveSurface);
+  const nextDispatches = resolveNextDispatches({
+    workspaceRoot,
+    harness,
+    tier: currentState.tier,
+    personas: nextPersonas,
+  });
+  if (nextDispatches && !nextDispatches.ok) {
+    return {
+      ok: false,
+      phase: currentState.phase,
+      target_phase: targetPhase,
+      gate_result: gateResult,
+      build_verification: buildVerification,
+      builder_partition: builderPartition,
+      review_validation: reviewValidation,
+      next_personas: nextPersonas,
+      next_dispatches: nextDispatches,
+      errors: [{
+        code: 'NEXT_DISPATCH_RESOLUTION_FAILED',
+        message: 'Resolve the next persona profile before advancing the project.',
+      }],
+    };
+  }
+
   const proposedState = {
     ...currentState,
     phase: targetPhase,
@@ -293,21 +299,14 @@ function advancePhase({
     registryUpdated = true;
   }
 
-  const nextPersonas = personasForPhase(targetPhase, currentState.tier, sensitiveSurface);
-  const nextDispatches = resolveNextDispatches({
-    workspaceRoot,
-    harness,
-    tier: currentState.tier,
-    personas: nextPersonas,
-  });
-
   let boardSummary = null;
   let uiSync = null;
+  let boardError = null;
   try {
     boardSummary = inspectProjectBoard(resolvedProjectDir).sharpness;
     uiSync = syncProjectDashboard(resolvedProjectDir, { workspaceRoot, repoRoot, harness });
-  } catch {
-    boardSummary = null;
+  } catch (error) {
+    boardError = { code: 'BOARD_UPDATE_FAILED', message: error.message };
   }
 
   return {
@@ -325,6 +324,7 @@ function advancePhase({
     next_dispatches: nextDispatches,
     sharpness: boardSummary,
     ui: uiSync,
+    board_error: boardError,
     state: transition.state,
     errors: [],
   };

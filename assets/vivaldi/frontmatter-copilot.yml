@@ -7,5 +7,6 @@ agents:
   - 10x-cobalt
   - 10x-sentinel
   - 10x-ralph
+  - Explore
   - explore
   - general-purpose

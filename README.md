@@ -54,7 +54,7 @@ the routing surface key described under [Model routing](#model-routing); don't c
 
 | `--harness` | Entrypoint | Files written |
 |---|---|---|
-| `copilot` | `10x-squad` custom agent | `.github/agents/10x-squad.agent.md`<br>`.github/skills/10x-*/` |
+| `copilot` | `10x-squad` custom agent | `.github/agents/10x-*.agent.md`<br>`.github/skills/10x-*/` |
 | `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/10x-squad-vivaldi/SKILL.md`<br>`.agents/skills/10x-squad-vivaldi/agents/openai.yaml`<br>`.agents/skills/10x-*/` |
 | `all` *(default)* | both | both trees |
 
@@ -63,6 +63,11 @@ and `agents/` directories. Vivaldi is not copied but *composed* per harness from
 so both entrypoints stay derived from one body. Every install also writes the shared
 `.10x-squad/runtime/` control scripts. A harness-specific uninstall preserves this runtime; an
 all-harness uninstall removes it while preserving `.10x-squad/model-routing.json`.
+
+When the target is the user's home directory, a Copilot install also mirrors its agents to
+`~/.copilot/agents/` and its complete skills to `~/.copilot/skills/`, where Copilot CLI discovers
+personal customizations. Uninstall removes those owned mirrors and leaves unrelated files intact.
+Workspace installs do not create the home-only mirrors.
 
 ### Verify the install
 
@@ -86,6 +91,10 @@ session. Personas dispatch as subagents.
 
 Explicit reasoning and context values are supported on **Copilot CLI** today. **VS Code** — and any
 harness the resolver doesn't recognize — accepts `auto`/`auto` only.
+
+If a scoped persona is unavailable, CLI can use its generic fallback agents. VS Code's `Explore`
+fallback is read-only and can only handle Einstein, Peter, or Sentinel; reinstall and reload the
+scoped agents before dispatching Linus, Ralph, or Cobalt.
 
 ### Codex
 
@@ -177,7 +186,7 @@ harness evidence: [`docs/model-routing-harness-spike.md`](docs/model-routing-har
 ```
 assets/vivaldi/         Vivaldi's single source: core.md (harness-agnostic body)
                         + dispatch-<harness>.md + frontmatter-<harness>.yml
-assets/skills/10x-*/    seven skills, installed as complete packages
+assets/skills/10x-*/    eight skills, installed as complete packages
 assets/runtime/         installed trace, state, transition, and registry controls
 lib/compose.js          renders each harness entrypoint from assets/vivaldi/
 lib/installer.js        per-harness asset manifest + recursive copy logic
@@ -203,11 +212,24 @@ node .10x-squad/runtime/control.js generate-registry --projects-root <projects-d
 The project registry supports gradual migration: directories without `project.json` remain visible
 as `UNMANAGED`, but must receive validated state before the squad resumes them.
 
+`advance-phase --harness <surface> --workspace-root <workspace>` resolves the next persona profiles
+before updating project state. Missing, broken, or invalid routing blocks the transition and is
+reported in `next_dispatches`; omit `--harness` only when routing is not needed. Resolver discovery
+prefers the active harness's install and can skip an older copy lacking the current API.
+
+The review gate checks existing SonarQube changed-file coverage even when Ralph runs tests in
+parallel. Coverage must be greater than 80%; an evidenced result at or below 80% blocks approval.
+`advance-phase` routes verified blocking findings back to BUILD and spec disputes back to PLAN,
+instead of advancing to TEST or DELIVER. Unavailable or stale coverage is reported as an advisory
+finding, without rerunning tests.
+
 The Workflow Monitor estimates agent and stage durations from phase transitions and artifact
 timestamps. Its `telemetry.json` records observed or inferred rework loops; durations and loops
 cannot reconstruct transitions that occurred before monitoring began. Parallel verification is
 counted as elapsed wall time, not the sum of overlapping agent durations. Invalid telemetry is
-reported rather than silently discarded.
+reported rather than silently discarded. Model profiles are shown as `unresolved` unless a harness
+and valid routing configuration are supplied; Vivaldi's configured model is labeled as an advisory,
+not the observed parent model.
 
 ## Development
 

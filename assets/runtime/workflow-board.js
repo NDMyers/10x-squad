@@ -8,6 +8,7 @@ const { spawn } = require('node:child_process');
 const { extractIds, extractSection, validateHandoff } = require('./handoff-validator');
 const { validateReview } = require('./review-validator');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
+const { loadModelTierConfig, resolvePersonaProfile } = require('./model-resolver');
 
 const PHASE_ORDER = ['TRIAGE', 'DELIBERATE', 'INTAKE', 'PLAN', 'BUILD', 'REVIEW', 'TEST', 'DELIVER'];
 
@@ -296,112 +297,77 @@ function phaseStatus(currentPhase, projectStatus, cardPhases) {
 
 function resolvePersonaProfiles({ workspaceRoot, harness, tier }) {
   const effectiveTier = tier || 'standard_ambiguous';
-  const defaults = {
-    vivaldi: { model: 'claude-opus-5.5', reasoning_effort: 'high', context_tier: 'auto', tier: effectiveTier },
-    einstein: { model: 'claude-opus-5.5', reasoning_effort: 'high', context_tier: 'auto', tier: effectiveTier },
-    peter: { model: 'claude-opus-5.5', reasoning_effort: 'high', context_tier: 'auto', tier: effectiveTier },
-    linus: { model: 'claude-haiku-5.5', reasoning_effort: 'medium', context_tier: 'auto', tier: effectiveTier },
-    cobalt: { model: 'gemini-4-argon', reasoning_effort: 'high', context_tier: 'auto', tier: effectiveTier },
-    sentinel: { model: 'gemini-4-argon', reasoning_effort: 'high', context_tier: 'auto', tier: effectiveTier },
-    ralph: { model: 'claude-haiku-5.5', reasoning_effort: 'medium', context_tier: 'auto', tier: effectiveTier },
-  };
-
-  let modelTierConfig;
-  try {
-    modelTierConfig = require('../skills/10x-squad-configure-tiers/scripts/model-tier-config');
-  } catch {
-    const candidate = workspaceRoot
-      ? path.join(workspaceRoot, '.github', 'skills', '10x-squad-configure-tiers', 'scripts', 'model-tier-config.js')
-      : null;
-    if (candidate && fs.existsSync(candidate)) {
-      modelTierConfig = require(candidate);
-    }
-  }
-
-  if (
-    !modelTierConfig ||
-    typeof modelTierConfig.resolve !== 'function' ||
-    typeof modelTierConfig.configPaths !== 'function' ||
-    typeof modelTierConfig.readConfigFile !== 'function'
-  ) {
-    return defaults;
-  }
-
-  const paths = modelTierConfig.configPaths({ workspaceRoot: workspaceRoot || process.cwd() });
-  const wsRes = paths.workspace ? modelTierConfig.readConfigFile(paths.workspace) : { status: 'missing' };
-  const globRes = paths.global ? modelTierConfig.readConfigFile(paths.global) : { status: 'missing' };
-  const workspaceConfig = wsRes.status === 'ok' ? wsRes.config : null;
-  const globalConfig = globRes.status === 'ok' ? globRes.config : null;
-
-  if (!workspaceConfig && !globalConfig) {
-    return defaults;
-  }
-
-  const harnessesToTry = harness
-    ? [harness]
-    : ['copilot-cli', 'copilot-vscode', 'codex-cli', 'codex-app'];
-
   const personas = ['einstein', 'peter', 'linus', 'cobalt', 'sentinel', 'ralph'];
-  for (const h of harnessesToTry) {
-    const resolvedMap = {};
-    let allOk = true;
-    for (const persona of personas) {
-      const res = modelTierConfig.resolve({
-        workspaceConfig,
-        globalConfig,
-        harness: h,
-        tier: effectiveTier,
-        persona,
-      });
-      if (!res || !res.ok) {
-        allOk = false;
-        break;
-      }
-      resolvedMap[persona] = {
-        model: res.model,
-        reasoning_effort: res.reasoning_effort || 'auto',
-        context_tier: res.context_tier || 'auto',
-        tier: effectiveTier,
-        harness: h,
-      };
+  const unresolved = () => ({
+    model: 'unresolved',
+    reasoning_effort: 'unresolved',
+    context_tier: 'unresolved',
+    tier: effectiveTier,
+    ...(harness ? { harness } : {}),
+  });
+  const profiles = Object.fromEntries(['vivaldi', ...personas].map((persona) => [persona, unresolved()]));
+  if (!harness) {
+    profiles.routing_error = {
+      code: 'HARNESS_REQUIRED',
+      message: 'Provide the active --harness to resolve model profiles.',
+    };
+    return profiles;
+  }
+
+  const loader = loadModelTierConfig({ workspaceRoot, harness });
+  if (!loader.ok) {
+    profiles.routing_error = { code: loader.code, message: loader.message };
+    return profiles;
+  }
+
+  const errors = [];
+  for (const persona of personas) {
+    const res = resolvePersonaProfile({ config: loader.config, workspaceRoot, harness, tier: effectiveTier, persona });
+    if (!res.ok) {
+      errors.push({ persona, code: res.code, errors: res.errors });
+      continue;
     }
-    if (allOk) {
-      let vivaldiProfile = null;
-      if (typeof modelTierConfig.resolveAdvisory === 'function') {
-        for (const advHarness of [h, ...harnessesToTry]) {
-          const adv = modelTierConfig.resolveAdvisory({
-            workspaceConfig,
-            globalConfig,
-            harness: advHarness,
-            tier: effectiveTier,
-          });
-          if (adv && adv.ok && adv.advisory && adv.model) {
-            vivaldiProfile = {
-              model: adv.model,
-              reasoning_effort:
-                adv.reasoning_effort && adv.reasoning_effort !== 'auto'
-                  ? adv.reasoning_effort
-                  : resolvedMap.einstein.reasoning_effort,
-              context_tier: 'auto',
-              tier: effectiveTier,
-              harness: advHarness,
-            };
-            break;
-          }
-        }
-      }
-      resolvedMap.vivaldi = vivaldiProfile || {
-        model: resolvedMap.einstein.model,
-        reasoning_effort: resolvedMap.einstein.reasoning_effort,
-        context_tier: resolvedMap.einstein.context_tier,
+    profiles[persona] = {
+      model: res.profile.model,
+      reasoning_effort: res.profile.reasoning_effort,
+      context_tier: res.profile.context_tier,
+      tier: effectiveTier,
+      harness,
+    };
+  }
+
+  const config = loader.config;
+  if (
+    errors.length === 0
+    && typeof config.resolveAdvisory === 'function'
+    && typeof config.configPaths === 'function'
+    && typeof config.readConfigFile === 'function'
+  ) {
+    const paths = config.configPaths({ workspaceRoot: workspaceRoot || process.cwd() });
+    const workspace = paths.workspace ? config.readConfigFile(paths.workspace) : { status: 'missing' };
+    const global = config.readConfigFile(paths.global);
+    const advisory = config.resolveAdvisory({
+      workspaceConfig: workspace.status === 'ok' ? workspace.config : null,
+      globalConfig: global.status === 'ok' ? global.config : null,
+      harness,
+      tier: effectiveTier,
+    });
+    if (advisory.ok && advisory.advisory) {
+      profiles.vivaldi = {
+        model: advisory.model,
+        reasoning_effort: advisory.reasoning_effort,
+        context_tier: 'auto',
         tier: effectiveTier,
-        harness: h,
+        harness,
+        advisory: true,
       };
-      return resolvedMap;
     }
   }
 
-  return defaults;
+  if (errors.length > 0) {
+    profiles.routing_error = { code: 'MODEL_ROUTING_RESOLUTION_FAILED', errors };
+  }
+  return profiles;
 }
 
 function buildSessionLog(projectDirectory, state, sharpness, profiles, counts, partition, timing) {
@@ -2505,7 +2471,7 @@ function renderHtmlDashboard(initialBoard) {
     const vivaldiProf = profiles.vivaldi || profiles.einstein || profiles.peter;
     if (vivaldiProf) {
       const vm = document.getElementById('viv-model');
-      if (vm) vm.textContent = vivaldiProf.model;
+      if (vm) vm.textContent = vivaldiProf.model + (vivaldiProf.advisory ? ' (advisory)' : '');
       const ve = document.getElementById('viv-effort');
       if (ve) ve.textContent = vivaldiProf.reasoning_effort;
       const vt = document.getElementById('viv-tier');

@@ -195,4 +195,3 @@ test('composePersonaAgents produces six scoped Copilot subagents with minimal to
   assert.doesNotMatch(sentinelFm, /- "edit"/);
   assert.doesNotMatch(sentinelFm, /- "execute"/);
 });
-

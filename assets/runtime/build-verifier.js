@@ -24,7 +24,7 @@ function extractSectionByPrefix(markdown, headingPrefix) {
   return body.join('\n');
 }
 
-function isLikelyRepoFilePath(candidate) {
+function isLikelyRepoFilePath(candidate, allowExtensionless = false) {
   if (typeof candidate !== 'string') return false;
   const trimmed = candidate.trim();
   if (!trimmed || /\s/.test(trimmed) || trimmed.includes('://') || trimmed.startsWith('-')) {
@@ -36,31 +36,50 @@ function isLikelyRepoFilePath(candidate) {
   if (/^(?:AC|D|K|EC|B)\d+$/i.test(trimmed)) {
     return false;
   }
-  return trimmed.includes('/') || /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}$/.test(trimmed);
+  return trimmed.includes('/')
+    || /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}$/.test(trimmed)
+    || (allowExtensionless && /^[A-Za-z0-9_.-]+$/.test(trimmed) && !/^[\d.]+$/.test(trimmed));
 }
 
 function extractFilesFromBlock(sectionText) {
   const files = [];
-  for (const line of sectionText.split(/\r?\n/)) {
-    const bulletMatch = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?`([^`\n]+)`(?:\*\*)?\s*(?:(?:—|–|--|-|:)\s*\S|\([^)]+\))/.exec(line);
-    if (bulletMatch && isLikelyRepoFilePath(bulletMatch[1])) {
-      files.push(bulletMatch[1].trim());
+  const lines = sectionText.split(/\r?\n/);
+  let fileColumn = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const bulletMatch = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?(?:`([^`\n]+)`|([^\s`*]+))(?:\*\*)?\s*(?:(?:—|–|--|-|:)\s*\S|\([^)]+\))/.exec(line);
+    const bulletPath = bulletMatch && (bulletMatch[1] || bulletMatch[2]);
+    if (bulletPath && isLikelyRepoFilePath(bulletPath, true)) {
+      fileColumn = null;
+      files.push(bulletPath.trim());
       continue;
     }
 
     const tableTrimmed = line.trim();
-    if (tableTrimmed.startsWith('|') && tableTrimmed.endsWith('|') && !/^[\s|:-]+$/.test(tableTrimmed)) {
-      const cells = tableTrimmed
-        .slice(1, -1)
-        .split('|')
-        .map((c) => c.trim());
-      for (const cell of cells.slice(0, 3)) {
-        const cleaned = cell.replace(/^\*\*|\*\*$/g, '').trim();
-        const cellMatch = /^`([^`\n]+)`$/.exec(cleaned);
-        if (cellMatch && isLikelyRepoFilePath(cellMatch[1])) {
-          files.push(cellMatch[1].trim());
-          break;
-        }
+    if (!tableTrimmed.startsWith('|') || !tableTrimmed.endsWith('|')) {
+      fileColumn = null;
+      continue;
+    }
+    if (/^[\s|:-]+$/.test(tableTrimmed)) continue;
+
+    const cells = tableTrimmed.slice(1, -1).split('|').map((cell) => cell.trim());
+    const nextLine = (lines[index + 1] || '').trim();
+    if (nextLine.startsWith('|') && /^[\s|:-]+$/.test(nextLine)) {
+      const headerIndex = cells.findIndex((cell) =>
+        /^(?:file(?:s|name)?(?:\s+path)?|path)$/i.test(cell.replace(/^\*\*|\*\*$/g, '').trim())
+      );
+      fileColumn = headerIndex === -1 ? null : headerIndex;
+      continue;
+    }
+
+    const candidates = fileColumn === null ? cells.slice(0, 3) : [cells[fileColumn] || ''];
+    for (const cell of candidates) {
+      const cleaned = cell.replace(/^\*\*|\*\*$/g, '').trim();
+      const quoted = /^`([^`\n]+)`$/.exec(cleaned);
+      const candidate = quoted ? quoted[1] : cleaned;
+      if (isLikelyRepoFilePath(candidate, fileColumn !== null || Boolean(quoted))) {
+        files.push(candidate.trim());
+        break;
       }
     }
   }
@@ -80,9 +99,25 @@ function parseFilePlan(spec) {
   const files = extractFilesFromBlock(section);
 
   if (files.length === 0 || /\bappendix\b/i.test(section)) {
-    const appendixSection = extractSectionByPrefix(spec, 'Appendix');
-    if (appendixSection) {
-      files.push(...extractFilesFromBlock(appendixSection));
+    const references = [...section.matchAll(/\bAppendix\s+([A-Za-z]|\d+)\b/gi)]
+      .map((match) => match[1].toUpperCase());
+    const headings = [...spec.matchAll(/^##\s+(Appendix\b[^\r\n]*)$/gim)];
+    const appendices = headings.map((match) => {
+      const start = match.index + match[0].length;
+      const nextHeading = /^##\s+/m.exec(spec.slice(start));
+      const label = /^Appendix\s+([A-Za-z]|\d+)\b/i.exec(match[1]);
+      return {
+        heading: match[1],
+        label: label ? label[1].toUpperCase() : null,
+        body: spec.slice(start, nextHeading ? start + nextHeading.index : undefined),
+      };
+    });
+    const filePlanAppendices = appendices.filter((entry) => /\bfile plan\b/i.test(entry.heading));
+    const selected = references.length > 0
+      ? appendices.filter((entry) => references.includes(entry.label))
+      : (filePlanAppendices.length > 0 ? filePlanAppendices : appendices.slice(0, 1));
+    for (const appendix of selected) {
+      files.push(...extractFilesFromBlock(appendix.body));
     }
   }
   return [...new Set(files)];
