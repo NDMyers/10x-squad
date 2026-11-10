@@ -520,7 +520,6 @@ test('inspectProjectBoard computes stage/agent bottleneck durations and tracks n
   assert.equal(verifyCard.state, 'rework');
   assert.equal(verifyCard.badge, '↺ rework -> build');
 });
-
 test('parseFilePlan supports Markdown tables and Appendix fallback, and verifyBuild flags EMPTY_FILE_PLAN', () => {
   const { parseFilePlan } = require('../assets/runtime/build-verifier');
 
@@ -601,8 +600,3 @@ test('partitionFilePlan normalizes PascalCase/kebab-case test stems and coalesce
   assert.equal(coalesced.mode, 'parallel_batches');
   assert.equal(coalesced.batches.length, 3);
 });
-
-
-
-
-
