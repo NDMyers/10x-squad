@@ -30,7 +30,7 @@ test.after(() => {
 function runNode(script, args, cwd, home) {
   return spawnSync(process.execPath, [script, ...args], {
     cwd,
-    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config') },
+    env: { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config') },
     encoding: 'utf8',
   });
 }

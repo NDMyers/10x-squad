@@ -6,6 +6,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const { posixShell, symlinkOrSkip } = require('./support/platform');
+
+const BASH = posixShell() || 'bash';
 
 const packageRoot = path.resolve(__dirname, '..');
 const checkSync = path.join(packageRoot, 'evals', 'check-sync.sh');
@@ -18,7 +21,7 @@ function makeWorkspace() {
 }
 
 function runCheck(workspace, ...args) {
-  return spawnSync('bash', [checkSync, ...args], {
+  return spawnSync(BASH, [checkSync, ...args], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -84,13 +87,13 @@ test('check-sync --source-only fails on extra files and retired 10x skills', () 
   assert.match(result.stdout, /\.agents\/skills\/10x-retired-skill\/SKILL\.md: extra deployed file/);
 });
 
-test('check-sync rejects a same-content symlinked owned file', () => {
+test('check-sync rejects a same-content symlinked owned file', (t) => {
   const workspace = makeWorkspace();
   const target = path.join(workspace, '.10x-squad', 'runtime', 'control.js');
   const external = path.join(workspace, 'external-control.js');
   fs.copyFileSync(target, external);
   fs.rmSync(target);
-  fs.symlinkSync(external, target);
+  if (!symlinkOrSkip(t, external, target)) return;
 
   const result = runCheck(workspace, '--source-only');
 

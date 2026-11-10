@@ -11,6 +11,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { posixShell } = require('./support/platform');
 
 const SKILL_DIR = path.join(__dirname, '..', 'assets', 'skills', '10x-squad-configure-tiers');
 const SKILL_MD = path.join(SKILL_DIR, 'SKILL.md');
@@ -69,7 +70,7 @@ function documentedConfigCommand(subcommand) {
 }
 
 function runDocumentedCommand(command, options) {
-  return spawnSync('/bin/sh', ['-c', command], {
+  return spawnSync(posixShell() || '/bin/sh', ['-c', command], {
     encoding: 'utf8',
     ...options,
   });

@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const { symlinkOrSkip } = require('./support/platform');
 
 const packageRoot = path.resolve(__dirname, '..');
 const controlPath = path.join(packageRoot, 'assets', 'runtime', 'control.js');
@@ -133,12 +134,12 @@ test('requires phase-specific canonical artifact pointers', () => {
   ]);
 });
 
-test('rejects artifact symlinks that resolve outside the project root', () => {
+test('rejects artifact symlinks that resolve outside the project root', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-artifact-symlink-'));
   const outside = path.join(root, 'outside.md');
   fs.writeFileSync(outside, 'outside\n');
   const { projectDirectory, state } = makeProject(root, 'symlink-project', { phase: 'INTAKE' });
-  fs.symlinkSync(outside, path.join(projectDirectory, 'external-context.md'));
+  if (!symlinkOrSkip(t, outside, path.join(projectDirectory, 'external-context.md'))) return;
   fs.writeFileSync(
     path.join(projectDirectory, 'project.json'),
     `${JSON.stringify({ ...state, phase: 'INTAKE', artifacts: { context: 'external-context.md' } }, null, 2)}\n`

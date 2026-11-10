@@ -7,9 +7,10 @@ const path = require('node:path');
 const { validateHandoff } = require('./handoff-validator');
 const { generateRegistry, loadProjectRecords, transitionProject, validateProject } = require('./project-state');
 const { validateReview } = require('./review-validator');
-const { renderBoard, serveBoard, syncProjectDashboard, toggleUi } = require('./workflow-board');
+const { openDashboard, renderBoard, serveBoard, syncProjectDashboard, toggleUi } = require('./workflow-board');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
 const { advancePhase } = require('./phase-runner');
+const { detectClaudeSurface } = require('./surface');
 
 function parseHandoffOptions(args) {
   const options = {};
@@ -113,9 +114,11 @@ function main(argv) {
     'render-board',
     'serve-board',
     'toggle-ui',
+    'open-dashboard',
+    'detect-surface',
   ].includes(command)) {
     console.error(
-      'usage: control.js <validate-handoff|validate-review|verify-build|partition-plan|advance-phase|validate-project|transition-project|generate-registry|render-board|serve-board|toggle-ui> [options]'
+      'usage: control.js <validate-handoff|validate-review|verify-build|partition-plan|advance-phase|validate-project|transition-project|generate-registry|render-board|serve-board|toggle-ui|open-dashboard|detect-surface> [options]'
     );
     return 2;
   }
@@ -133,6 +136,25 @@ function main(argv) {
       });
       console.log(JSON.stringify(result));
       return 0;
+    }
+
+    if (command === 'detect-surface') {
+      parseNamedPaths(args, []);
+      const result = detectClaudeSurface(process.env);
+      console.log(JSON.stringify(result));
+      return result.ok ? 0 : 1;
+    }
+
+    if (command === 'open-dashboard') {
+      const options = parseNamedPaths(args, ['project'], ['workspace-root', 'repo-root', 'harness', 'dry-run']);
+      const result = openDashboard(options.project, {
+        workspaceRoot: options['workspace-root'],
+        repoRoot: options['repo-root'],
+        harness: options.harness,
+        dryRun: options['dry-run'] === 'true',
+      });
+      console.log(JSON.stringify(result));
+      return result.ok ? 0 : 1;
     }
 
     if (command === 'validate-handoff') {

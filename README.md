@@ -6,9 +6,10 @@ skills, and a dependency-free deterministic control runtime. The skills include 
 model, reasoning, and context routing and `10x-squad-toggle-ui` for toggling the automatic live
 Workflow Monitor UI.
 
-Ships to **GitHub Copilot** and **Codex** (Codex CLI and the ChatGPT desktop app).
+Ships to **GitHub Copilot**, **Codex** (Codex CLI and the ChatGPT desktop app), and **Claude Code**
+(the `claude` CLI and the Claude desktop app's Code tab).
 
-Requires Node.js ≥ 20. No runtime dependencies.
+Requires Node.js ≥ 20. No runtime dependencies. Works on Windows, macOS, and Linux.
 
 ---
 
@@ -36,14 +37,16 @@ Commands:
   render-board
   serve-board
   toggle-ui
+  open-dashboard
+  detect-surface
 
   -d, --directory <path>   Target project directory (default: cwd)
-  --harness <name>         copilot | codex | all (default: all)
+  --harness <name>         copilot | codex | claude | all (default: all)
   -h, --help               Show help
   -v, --version            Show version
 ```
 
-Re-running is idempotent, and unrelated `.github/` / `.agents/` customizations in the target
+Re-running is idempotent, and unrelated `.github/` / `.agents/` / `.claude/` customizations in the target
 workspace are preserved — the installer only writes the files it owns. It **never** touches model
 routing config (see [Model routing](#model-routing)).
 
@@ -56,28 +59,32 @@ the routing surface key described under [Model routing](#model-routing); don't c
 |---|---|---|
 | `copilot` | `10x-squad` custom agent | `.github/agents/10x-*.agent.md`<br>`.github/skills/10x-*/` |
 | `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/10x-squad-vivaldi/SKILL.md`<br>`.agents/skills/10x-squad-vivaldi/agents/openai.yaml`<br>`.agents/skills/10x-*/` |
-| `all` *(default)* | both | both trees |
+| `claude` | `/10x-squad` skill | `.claude/skills/10x-squad/SKILL.md`<br>`.claude/agents/10x-*.md`<br>`.claude/skills/10x-*/` |
+| `all` *(default)* | all three | all three trees |
 
 Each skill installs as a complete package — `SKILL.md` plus its nested `scripts/`, `references/`,
 and `agents/` directories. Vivaldi is not copied but *composed* per harness from `assets/vivaldi/`,
-so both entrypoints stay derived from one body. Every install also writes the shared
+so every entrypoint stays derived from one body. Every install also writes the shared
 `.10x-squad/runtime/` control scripts. A harness-specific uninstall preserves this runtime; an
 all-harness uninstall removes it while preserving `.10x-squad/model-routing.json`.
 
 When the target is the user's home directory, a Copilot install also mirrors its agents to
 `~/.copilot/agents/` and its complete skills to `~/.copilot/skills/`, where Copilot CLI discovers
 personal customizations. Uninstall removes those owned mirrors and leaves unrelated files intact.
-Workspace installs do not create the home-only mirrors.
+Workspace installs do not create the home-only mirrors. A Claude install into the home directory
+needs no mirror: `~/.claude/skills/` and `~/.claude/agents/` are Claude Code's own user-level roots,
+so `--directory ~ --harness claude` makes `/10x-squad` available in every project.
 
 ### Verify the install
 
 ```
 ls <workspace-root>/.github/agents/10x-squad.agent.md          # copilot
 ls <workspace-root>/.agents/skills/10x-squad-vivaldi/SKILL.md  # codex
+ls <workspace-root>/.claude/skills/10x-squad/SKILL.md          # claude
 ```
 
 Then open the workspace in the harness and invoke the orchestrator — `@10x-squad` on Copilot,
-`$10x-squad-vivaldi` on Codex. It introduces itself before doing anything; if it doesn't, the skill
+`$10x-squad-vivaldi` on Codex, `/10x-squad` on Claude Code. It introduces itself before doing anything; if it doesn't, the skill
 didn't load.
 
 ---
@@ -112,6 +119,33 @@ default on both surfaces. Vivaldi sets `allow_implicit_invocation: false`, so it
 unrelated request and does not appear in the ambient skill list; invoke it by name.
 
 Evidence, probe records, and known surface limits: [`docs/codex-harness-spike.md`](docs/codex-harness-spike.md).
+
+### Claude Code
+
+One Claude install serves **two surfaces**: the terminal CLI (`claude-cli`, including `claude -p`) and
+the Claude desktop app's Code tab (`claude-desktop`). Each keeps its own routing profile. Vivaldi runs
+`control.js detect-surface` (it reads `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`) and stops on any
+entrypoint it has no evidence for, such as an IDE extension, rather than guessing. A `claude`
+started from a shell *inside* the desktop app inherits the app's entrypoint and resolves the
+desktop profile; unset `CLAUDE_CODE_ENTRYPOINT` first if you want the CLI profile.
+
+- **Vivaldi is the `/10x-squad` skill**, because it must run in the main conversation: Claude Code
+  subagents cannot dispatch subagents. It is `disable-model-invocation`, so it only runs when named,
+  and its `allowed-tools` pre-approve the runtime and resolver commands so routing runs unattended.
+- **Personas are real subagents** (`.claude/agents/10x-*.md`) with scoped tools. Einstein, Peter, and
+  Sentinel can only read; Cobalt can also run commands; Linus and Ralph can edit. Vivaldi dispatches
+  them by `subagent_type` with a per-dispatch `model` and `effort`, and runs Cobalt and Sentinel in
+  parallel.
+- **Models are the dispatch tool's aliases** (for example `opus` or `sonnet`), read live from the
+  tool's own rejection message by `/10x-squad-configure-tiers`. An alias follows its model family as
+  new versions ship.
+- **New personas need a new session.** Claude Code loads `.claude/agents/` at session start, so
+  start a fresh session after installing or upgrading.
+- On Windows, Claude Code runs its Bash tool through Git Bash, so the same commands work on every OS.
+  Without an integrated browser, the Workflow Monitor opens through `control.js open-dashboard` in
+  the OS default browser.
+
+Evidence, probe records, and known surface limits: [`docs/claude-code-harness-spike.md`](docs/claude-code-harness-spike.md).
 
 ---
 
@@ -148,7 +182,7 @@ Run **`/10x-squad-configure-tiers`** inside the harness to write a profile. It s
 | Scope | Path |
 |---|---|
 | workspace | `<workspace>/.10x-squad/model-routing.json` |
-| global | `$XDG_CONFIG_HOME/10x-squad/model-routing.json` |
+| global | `$XDG_CONFIG_HOME/10x-squad/model-routing.json` (default `~/.config/10x-squad/`, on Windows too) |
 
 **Reinstalling never touches these files.**
 
@@ -160,6 +194,8 @@ Profiles are keyed by **routing surface** — a finer-grained identifier than th
 | `copilot-cli` | `auto` `low` `medium` `high` `xhigh` | `auto` `default` `long_context` |
 | `codex-cli` | `auto` `low` `medium` `high` `xhigh` `max` `ultra` | `auto` |
 | `codex-app` | `auto` `low` `medium` `high` `xhigh` `max` `ultra` | `auto` |
+| `claude-cli` | `auto` `low` `medium` `high` `xhigh` `max` | `auto` |
+| `claude-desktop` | `auto` `low` `medium` `high` `xhigh` `max` | `auto` |
 | anything else (incl. `copilot-vscode`) | `auto` | `auto` |
 
 Configure each surface you actually use. A missing profile is a hard stop, not a fallback.
@@ -192,7 +228,7 @@ lib/compose.js          renders each harness entrypoint from assets/vivaldi/
 lib/installer.js        per-harness asset manifest + recursive copy logic
 bin/10x-squad.js        CLI: 10x-squad install [-d <dir>] [--harness <name>]
 test/                   node --test suites (npm test runs full discovery)
-evals/                  deployment parity check + Copilot/Codex JSONL eval harness
+evals/                  deployment parity check + Copilot/Codex/Claude JSONL eval harness
 docs/                   harness spikes, model-tier operator guide
 docs/review/            squad review, architecture, eval plan, learning notes
 ```
@@ -234,21 +270,25 @@ not the observed parent model.
 ## Development
 
 ```
-npm test                                  # full suite
-W=/tmp/sync && rm -rf $W && mkdir -p $W
-node bin/10x-squad.js install -d $W
-SQUAD_ROOT=$W bash evals/check-sync.sh --source-only
+npm test                                  # full suite (Windows, macOS, Linux)
+W="$(mktemp -d)"
+node bin/10x-squad.js install -d "$W"
+SQUAD_ROOT="$W" bash evals/check-sync.sh --source-only
 DRY_RUN=1 REPS=1 EVAL_HARNESS=copilot-cli bash evals/run.sh smoke
 ```
 
+On Windows, run the `bash` lines in Git Bash. The test suite finds Git Bash by itself (set
+`TENX_BASH` to override); symlink tests skip unless Developer Mode is on. CI runs the suite on
+Ubuntu, macOS, and Windows (`.github/workflows/test.yml`).
+
 `check-sync.sh` recomposes Vivaldi and compares it against the deployed copy. Its exit code is the
 total failure count, split into three categories with different owners: **SOURCE** (the invariant
-below — must always be 0), **UPSTREAM** (corpay-agents copies lagging), and **PORT** (Claude Code
-command stubs). `--source-only` skips optional legacy distribution checks and exits on SOURCE
+below — must always be 0), **UPSTREAM** (corpay-agents copies lagging), and **PORT** (legacy Claude Code
+command stubs, superseded by the `claude` install target). `--source-only` skips optional legacy distribution checks and exits on SOURCE
 failures alone, making it suitable for CI. Without that flag the complete historical audit remains
 available.
 
-Real eval runs require `EVAL_HARNESS=copilot-cli|codex-cli`, an exact target-surface `EVAL_MODEL`,
+Real eval runs require `EVAL_HARNESS=copilot-cli|codex-cli|claude-cli`, an exact target-surface `EVAL_MODEL`,
 and `EVAL_ROUTING_CONFIG` pointing to a `model-routing.json` containing that surface's persona
 profiles. Each run installs the selected harness and routing config into its isolated fixture,
 preserves uniquely addressed raw JSONL events under `evals/runs/`, and appends only observable
@@ -259,8 +299,8 @@ for concurrent suites.
 ## The source-of-truth rule
 
 **This repo's `assets/` is the only place squad prompts are edited.** Deployed copies
-(`<workspace>/.github/agents|skills/`, `<workspace>/.agents/skills/`, corpay-agents) are build
-outputs — never edit them in place. Vivaldi is doubly a build output: both harness entrypoints are
+(`<workspace>/.github/agents|skills/`, `<workspace>/.agents/skills/`, `<workspace>/.claude/`, corpay-agents) are build
+outputs — never edit them in place. Vivaldi is doubly a build output: every harness entrypoint is
 *composed* from `assets/vivaldi/`, so there is no checked-in copy of the assembled file to edit by
 mistake.
 

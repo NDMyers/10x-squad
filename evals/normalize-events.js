@@ -54,7 +54,68 @@ function countToolCalls(events) {
     : new Set(completed.map((event, index) => event.item?.id || event.id || `completed-${index}`)).size;
 }
 
+// Claude Code `claude -p --output-format stream-json --verbose`: assistant
+// events carry message.model and message.usage (subagent turns also carry
+// parent_tool_use_id), and the final `result` event carries total_cost_usd and
+// per-model totals in modelUsage that already include subagent usage.
+const CLAUDE_DISPATCH_TOOLS = new Set(['Agent', 'Task']);
+
+function finiteOrNull(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function sumModelUsage(modelUsage, key) {
+  const values = Object.values(modelUsage || {})
+    .map((usage) => usage && usage[key])
+    .filter(Number.isFinite);
+  return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
+}
+
+function normalizeClaudeEvents(events, options) {
+  const assistant = events.filter((event) => event.type === 'assistant' && event.message);
+  const result = [...events].reverse().find((event) => event.type === 'result');
+  const models = new Set(
+    assistant
+      .map((event) => event.message.model)
+      .filter((model) => typeof model === 'string' && model.length > 0 && model !== '<synthetic>')
+  );
+  for (const model of Object.keys(result?.modelUsage || {})) models.add(model);
+
+  const toolUses = new Map();
+  for (const event of assistant) {
+    for (const block of event.message.content || []) {
+      if (block && block.type === 'tool_use') toolUses.set(block.id, { name: block.name, event });
+    }
+  }
+  const dispatches = [...toolUses.values()].filter(
+    ({ name, event }) => CLAUDE_DISPATCH_TOOLS.has(name) && !event.parent_tool_use_id
+  );
+  const messageIds = new Set(assistant.map((event, index) => event.message.id || `assistant-${index}`));
+
+  const usage = result?.usage || {};
+  const fromModels = (key) => sumModelUsage(result?.modelUsage, key);
+  return {
+    harness: options.harness,
+    requested_model: options.model,
+    observed_models: [...models].sort((left, right) => left.localeCompare(right)),
+    agent_exit: options.exitCode,
+    duration_ms: options.durationMs,
+    input_tokens: fromModels('inputTokens') ?? finiteOrNull(usage.input_tokens),
+    cached_input_tokens: fromModels('cacheReadInputTokens') ?? finiteOrNull(usage.cache_read_input_tokens),
+    output_tokens: fromModels('outputTokens') ?? finiteOrNull(usage.output_tokens),
+    model_calls: messageIds.size === 0 ? null : messageIds.size,
+    subagent_calls: dispatches.length === 0 ? null : dispatches.length,
+    tool_calls: toolUses.size === 0 ? null : toolUses.size,
+    cost_usd: finiteOrNull(result?.total_cost_usd),
+    event_parse_errors: options.eventParseErrors || 0,
+  };
+}
+
 function normalizeEvents(events, options) {
+  if (options.harness === 'claude-cli') {
+    return normalizeClaudeEvents(events, options);
+  }
+
   const observedModels = [...new Set(
     events
       .flatMap((event) => [event.model, event.data?.model, event.item?.model])

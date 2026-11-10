@@ -6,6 +6,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const { posixShell, symlinkOrSkip } = require('./support/platform');
+
+const BASH = posixShell() || 'bash';
 
 const packageRoot = path.resolve(__dirname, '..');
 const evalRoot = path.join(packageRoot, 'evals');
@@ -99,7 +102,7 @@ test('dry-run eval emits the target-harness metric schema without a model call',
   const runs = path.join(outputDirectory, 'runs');
   const smokeTask = path.join(evalRoot, 'tasks', 'smoke-hello');
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'test-variant', smokeTask], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'test-variant', smokeTask], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -127,7 +130,7 @@ test('eval CSV quotes comma-bearing fields and remains summarizable', () => {
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-eval-csv-'));
   const csv = path.join(outputDirectory, 'results.csv');
   const smokeTask = path.join(evalRoot, 'tasks', 'smoke-hello');
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'baseline,control', smokeTask], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'baseline,control', smokeTask], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -143,7 +146,7 @@ test('eval CSV quotes comma-bearing fields and remains summarizable', () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(fs.readFileSync(csv, 'utf8'), /"baseline,control"/);
 
-  const summary = spawnSync('bash', [path.join(evalRoot, 'summarize.sh')], {
+  const summary = spawnSync(BASH, [path.join(evalRoot, 'summarize.sh')], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: { ...process.env, RESULTS_CSV: csv },
@@ -159,7 +162,7 @@ test('eval runner rejects an incompatible existing CSV schema before running tas
   fs.writeFileSync(csv, 'timestamp,variant,prompt_sha,task,rep,pass,cost_usd,duration_ms,num_turns\n');
   const smokeTask = path.join(evalRoot, 'tasks', 'smoke-hello');
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'schema-check', smokeTask], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'schema-check', smokeTask], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -183,7 +186,7 @@ test('eval runner rejects a results file already owned by another run', () => {
   fs.mkdirSync(`${csv}.lock`);
   const smokeTask = path.join(evalRoot, 'tasks', 'smoke-hello');
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'locked', smokeTask], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'locked', smokeTask], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -209,7 +212,7 @@ test('eval runner marks a corrupt JSONL event stream as failed', () => {
   fs.writeFileSync(events, 'null\n{"unexpected":true}\n');
   const smokeTask = path.join(evalRoot, 'tasks', 'smoke-hello');
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'corrupt-events', smokeTask], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'corrupt-events', smokeTask], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -236,7 +239,7 @@ test('variant labels cannot escape the configured runs directory', () => {
   const runs = path.join(outputDirectory, 'runs');
   const smokeTask = path.join(evalRoot, 'tasks', 'smoke-hello');
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), '../../escaped', smokeTask], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), '../../escaped', smokeTask], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -270,7 +273,7 @@ test('tasks with the same basename are rejected before evidence can collide', ()
     return task;
   });
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'collision-check', ...tasks], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'collision-check', ...tasks], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: {
@@ -308,7 +311,7 @@ test('repeated eval invocations preserve distinct raw event paths', () => {
   };
 
   for (let invocation = 0; invocation < 2; invocation += 1) {
-    const result = spawnSync('bash', [path.join(evalRoot, 'run.sh'), 'same-variant', smokeTask], options);
+    const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'same-variant', smokeTask], options);
     assert.equal(result.status, 0, result.stderr || result.stdout);
   }
 
@@ -335,7 +338,7 @@ test('summarizer groups target profiles and reports missing metrics as n/a', () 
     ].join('\n')
   );
 
-  const result = spawnSync('bash', [path.join(evalRoot, 'summarize.sh')], {
+  const result = spawnSync(BASH, [path.join(evalRoot, 'summarize.sh')], {
     cwd: packageRoot,
     encoding: 'utf8',
     env: { ...process.env, RESULTS_CSV: csv },
@@ -346,4 +349,61 @@ test('summarizer groups target profiles and reports missing metrics as n/a', () 
   assert.match(result.stdout, /copilot-cli/);
   assert.match(result.stdout, /100%/);
   assert.match(result.stdout, /n\/a/);
+});
+test('normalizes Claude Code stream-json, counting parent and child models and dispatches', () => {
+  const events = [
+    { type: 'system', subtype: 'init', model: 'claude-sonnet-x' },
+    { type: 'assistant', parent_tool_use_id: null, message: { id: 'm1', model: 'claude-sonnet-x', content: [
+      { type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: '10x-linus', model: 'haiku' } },
+    ] } },
+    { type: 'assistant', parent_tool_use_id: 't1', message: { id: 'm2', model: 'claude-haiku-x', content: [
+      { type: 'tool_use', id: 't2', name: 'Edit', input: {} },
+    ] } },
+    { type: 'assistant', parent_tool_use_id: null, message: { id: 'm3', model: '<synthetic>', content: [] } },
+    { type: 'result', subtype: 'success', total_cost_usd: 0.25, usage: { input_tokens: 1 },
+      modelUsage: {
+        'claude-sonnet-x': { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 5 },
+        'claude-haiku-x': { inputTokens: 40, outputTokens: 4, cacheReadInputTokens: 0 },
+      } },
+  ];
+  const result = normalizeEvents(events, { harness: 'claude-cli', model: 'sonnet', durationMs: 3, exitCode: 0 });
+  assert.deepEqual(result.observed_models, ['claude-haiku-x', 'claude-sonnet-x']);
+  assert.equal(result.input_tokens, 140);
+  assert.equal(result.output_tokens, 14);
+  assert.equal(result.cached_input_tokens, 5);
+  assert.equal(result.subagent_calls, 1, 'only main-thread Agent/Task calls are dispatches');
+  assert.equal(result.tool_calls, 2);
+  assert.equal(result.model_calls, 3);
+  assert.equal(result.cost_usd, 0.25);
+});
+
+test('the Claude adapter runs /10x-squad headless with stream-json and per-run effort', () => {
+  const claude = fs.readFileSync(path.join(evalRoot, 'adapters', 'claude-cli.sh'), 'utf8');
+  const runner = fs.readFileSync(path.join(evalRoot, 'run.sh'), 'utf8');
+  assert.match(claude, /\/10x-squad /);
+  assert.match(claude, /--output-format stream-json --verbose/);
+  assert.match(claude, /--model "\$model"/);
+  assert.match(claude, /--effort "\$EVAL_REASONING_EFFORT"/);
+  assert.match(claude, /--no-session-persistence/);
+  assert.match(runner, /copilot-cli\|codex-cli\|claude-cli\)/);
+});
+
+test('a relative task path still runs its check from inside the task workspace', () => {
+  const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-eval-rel-'));
+  const csv = path.join(outputDirectory, 'results.csv');
+  const result = spawnSync(BASH, [path.join(evalRoot, 'run.sh'), 'relative-task', 'evals/tasks/smoke-hello'], {
+    cwd: packageRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DRY_RUN: '1',
+      REPS: '1',
+      EVAL_HARNESS: 'copilot-cli',
+      RESULTS_CSV: csv,
+      RUNS_DIR: path.join(outputDirectory, 'runs'),
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  // pass column is 1: check.sh resolved even though the task path was relative.
+  assert.match(fs.readFileSync(csv, 'utf8'), /,relative-task,[^,]+,copilot-cli,dry-run,auto,,smoke-hello,1,1,0,/);
 });

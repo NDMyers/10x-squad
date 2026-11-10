@@ -1,0 +1,4 @@
+name: 10x-squad
+description: "Run the 10x Squad development pipeline for feature development, bug fixes, refactors, or architectural changes. Vivaldi triages the request, routes atomic tasks to persona subagents (Einstein, Peter, Linus, Cobalt, Sentinel, Ralph), and enforces the traceability and review gates."
+disable-model-invocation: true
+allowed-tools: Bash(node .10x-squad/runtime/control.js *), Bash(node .claude/skills/10x-squad-configure-tiers/scripts/model-tier-config.js *)

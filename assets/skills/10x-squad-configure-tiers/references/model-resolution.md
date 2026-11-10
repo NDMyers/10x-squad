@@ -79,6 +79,46 @@ discriminate — both surfaces resolve the same standalone binary on `PATH`.
 
 Codex reasoning-effort legality is **per model**: `codex debug models` reports each model's `supported_reasoning_levels`, and the same value is validated at spawn time (`Reasoning effort \`x\` is not supported for model \`gpt-5.6-sol\`. Supported reasoning efforts: …`). When a tier's `reasoning_effort` is explicit, confirm it is in the chosen model's supported set before writing. The dependency-free engine validates only the harness-level vocabulary; this per-model check is the skill's responsibility because only the skill holds the live catalog. See `docs/codex-harness-spike.md` (C4/C7/C9) for evidence and for why executed-model identity is not observable on Codex.
 
+## claude-cli and claude-desktop adapter
+
+Claude Code's terminal CLI (`claude-cli`) and the Claude desktop app's Code tab (`claude-desktop`)
+are **separate surfaces** with separate stored profiles; never copy one surface's profile to the
+other. Detect the active surface with `node .10x-squad/runtime/control.js detect-surface` (or the
+`$HOME/.10x-squad/runtime/control.js` fallback); it reads `CLAUDECODE` and
+`CLAUDE_CODE_ENTRYPOINT` and fails loudly on an unverified entrypoint. Run it, and every command in
+this skill, with the Bash tool: Claude Code provides a POSIX shell for it on Windows, macOS, and
+Linux.
+
+1. **Spawn catalog = the dispatch tool's own rejection.** Call the subagent dispatch tool (`Agent`;
+   some builds list it as `Task`) with `subagent_type: "general-purpose"`, `model:
+   "__10x_catalog_probe__"`, `description: "catalog probe"`, and the no-side-effect prompt
+   `Do not read files, write files, or invoke tools.` It is rejected before launch with an
+   `InputValidationError` whose `values` array lists every accepted `model` value. Those exact strings
+   are `catalog.models`. They are family aliases (for example `opus`, `sonnet`), each resolving to
+   that family's current model for the signed-in account, so an assignment follows the family as
+   new versions ship.
+2. Never supplement the list from `/model`, `claude --help`, documentation, another surface, or
+   memory, and never store a full dated model ID the dispatch tool did not list: the dispatch
+   boundary would reject it.
+3. **Parent catalog (advisory only):** use the same returned list as `parent_catalog`. The parent
+   session accepts these aliases through `/model`, so an advisory resolved against them is always
+   selectable by the user.
+4. **Runtime settings.** The dispatch tool's `effort` parameter is the routing `reasoning_effort`;
+   its accepted values are enumerated by the same rejection technique (an invalid `effort` lists
+   them). On both surfaces the recorded vocabulary is `auto|low|medium|high|xhigh|max`. There is no
+   per-dispatch context parameter: `context_tier` is `auto` only.
+5. **Probes.** For each verification target, dispatch `subagent_type: "general-purpose"` with
+   `model` = `dispatch_arguments.model` and, when present, `effort` =
+   `dispatch_arguments.reasoning_effort` (the field is named `effort` on this tool; never add it when
+   omitted), plus the `MODEL_ROUTE_OK` prompt. The dispatch result does not report the child's
+   executed model, so record `identity_observable: false`; such entries are `unverified` /
+   `addressability_probe`. A probe may return a background-launch acknowledgement — wait for its
+   completion notification before recording `ok`; never record a result that has not arrived.
+6. If the rejection does not enumerate a list, STOP and show the raw harness error. No hardcoded
+   fallback.
+
+See `docs/claude-code-harness-spike.md` for the evidence behind each step.
+
 ## Matching states and interaction
 
 The only states are `exact`, `likely`, `ambiguous`, `no_match`, and `banned`; never infer a sixth state.

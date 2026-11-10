@@ -51,6 +51,8 @@ Each harness has its own profile and identifier namespace — never reuse identi
 | VS Code Copilot | `copilot-vscode` | **Catalog discovery and exact-label addressability proven; verified exact-routing gate not passed** — addressability-only probes stay unverified | picker display strings |
 | Codex CLI | `codex-cli` | **Supported at the unverified tier** — per-dispatch model + reasoning proven, but executed-model identity is not observable, so probes stay `unverified` (see `codex-harness-spike.md`) | spawnable model slugs |
 | ChatGPT desktop app | `codex-app` | **Supported at the unverified tier** — spawn, per-dispatch model + reasoning, fail-loud, and unattended resolver all proven on this surface (Probe F); executed-model identity is not observable here either | spawnable model slugs, acquired on this surface |
+| Claude Code CLI | `claude-cli` | **Supported at the unverified tier in-session** — see `claude-code-harness-spike.md`; executed child models are verified by the eval harness from `claude -p` stream-json | dispatch-tool model aliases (e.g. `opus`) |
+| Claude desktop app (Code tab) | `claude-desktop` | **Supported at the unverified tier** — per-dispatch model + effort, fail-loud, and surface detection proven on this surface | dispatch-tool model aliases, acquired on this surface |
 
 The two Codex surfaces are deliberately kept separate. They run different engine builds
 (`0.145.0` vs `0.146.0-alpha.3.1` on the reference machine), and their spawnable model sets drift
@@ -61,7 +63,8 @@ the `codex` binary path and `codex --version` do **not** discriminate.
 
 Explicit dispatch settings by surface: `copilot-cli` accepts both settings; `codex-cli` and
 `codex-app` accept explicit `reasoning_effort` but only `auto` `context_tier` (the Codex spawn tool
-has no context parameter); `copilot-vscode` and unknown harnesses allow `auto`/`auto` only. A setting
+has no context parameter); `claude-cli` and `claude-desktop` accept explicit `reasoning_effort`
+(dispatched as the tool's `effort`) but only `auto` `context_tier`; `copilot-vscode` and unknown harnesses allow `auto`/`auto` only. A setting
 outside its surface's vocabulary hard-stops before any probe, preview, or write. Accepted
 vocabularies:
 
@@ -70,6 +73,8 @@ vocabularies:
 | `copilot-cli` | `auto\|low\|medium\|high\|xhigh` | `auto\|default\|long_context` |
 | `codex-cli` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
 | `codex-app` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
+| `claude-cli` | `auto\|low\|medium\|high\|xhigh\|max` | `auto` only |
+| `claude-desktop` | `auto\|low\|medium\|high\|xhigh\|max` | `auto` only |
 | `copilot-vscode`, unknown | `auto` only | `auto` only |
 
 Example values in docs are illustrative shapes, never defaults or a selectable list. Catalog/doc presence ≠ availability: entitlement, authentication, and the active session filter the real list. On the CLI, the authoritative list comes from the harness itself (e.g., a failed dispatch error enumerates entitled models; `/subagents` shows per-agent choices). On VS Code, a live invalid `runSubagent` call rejected the identifier before child launch and returned that active session's selectable labels. A later exact picker-label no-op returned `MODEL_ROUTE_OK`, proving that label was addressable in the tested session.
@@ -93,6 +98,17 @@ For VS Code, a successful exact-model no-op proves that the label is addressable
 - **The spawn model set is narrower than the parent set.** `codex debug models` lists parent-selectable models; `spawn_agent` accepts a smaller subset. Assignments must be spawnable models, taken from the spawn-time `Available models:` enumeration, not from `codex debug models` alone.
 - **Reasoning effort is validated per model.** `max`/`ultra` exist only on models that list them (`codex debug models` → `supported_reasoning_levels`). The configure skill checks the chosen effort against the chosen model before writing; the harness enforces it again at spawn.
 - **Vivaldi is invoked by name.** Its `agents/openai.yaml` sets `allow_implicit_invocation: false`, so a 25KB orchestrator never fires on an unrelated request — and it does not appear in the ambient skill list. Invoke `$10x-squad-vivaldi` explicitly.
+
+## Operational preconditions (Claude Code CLI / desktop app)
+
+- **Vivaldi runs in the main conversation.** It is the `/10x-squad` skill, not a subagent, because Claude Code subagents cannot dispatch subagents. If the conversation did not open with Vivaldi's introduction, the skill did not load.
+- **Start a new session after installing.** Claude Code loads `.claude/agents/` at session start; the six `10x-*` persona agents must be listed as available `subagent_type` values or the pipeline hard-blocks rather than substituting a generic agent.
+- **Surface detection is an environment read.** `node .10x-squad/runtime/control.js detect-surface` maps `CLAUDE_CODE_ENTRYPOINT` (`cli`, `sdk-cli` → `claude-cli`; `claude-desktop` → `claude-desktop`) and fails loudly on anything else, including IDE extensions, which have not been probed. A `claude` launched from a shell inside the desktop app inherits `claude-desktop`; unset `CLAUDE_CODE_ENTRYPOINT` before launching it to use the CLI profile.
+- **Squad commands are written to be pre-approvable:** one command per call, `--workspace-root .`, no quotes or `$VARS` — Claude Code will not pre-approve anything else, even under the skill's `allowed-tools`.
+- **The resolver runs unattended** because the `/10x-squad` skill's `allowed-tools` pre-approve `node .10x-squad/runtime/control.js` and the workspace resolver. A user-level install (`~/.claude/`) resolves through `$HOME` and asks once; approve it permanently, or a declined call hard-stops the pipeline.
+- **Model values are aliases.** The dispatch tool accepts only the values its rejection message enumerates (family aliases such as `opus`, `sonnet`); configure-tiers stores those exact strings. Each alias floats to the newest model in its family for the signed-in account.
+- **Executed-model identity is not observable in-session.** The dispatch result carries no model field, so profiles record `unverified` / `addressability_probe`; the fail-loud pre-launch rejection is the backstop. `claude -p --output-format stream-json` does carry each child turn's `message.model`, and the eval harness uses it.
+- **Windows:** Claude Code's Bash tool is Git Bash, so the POSIX commands in the contract run unchanged. Install Git for Windows if Claude Code reports no shell.
 
 ## Free-text and local/BYOK
 

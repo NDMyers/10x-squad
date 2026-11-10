@@ -4,7 +4,18 @@ set -euo pipefail
 CSV="${RESULTS_CSV:-$(cd "$(dirname "$0")" && pwd)/results.csv}"
 [ -f "$CSV" ] || { echo "no results.csv yet"; exit 1; }
 
-python3 - "$CSV" <<'EOF'
+# Windows installs Python 3 as `python`; `python3` there is absent or a Store stub.
+PYTHON=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 \
+    && "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+[ -n "$PYTHON" ] || { echo "summarize.sh needs Python 3 on PATH" >&2; exit 1; }
+
+"$PYTHON" - "$CSV" <<'EOF'
 import csv
 import sys
 from collections import defaultdict

@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      # Windows runners default to core.autocrlf=true. .gitattributes pins LF,
+      # and the composer also normalizes, but checking out with autocrlf off
+      # keeps this job identical to a fresh clone on any developer machine.
+      - name: Disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Shell-based tests (evals, check-sync, documented skill commands) run
+      # under Git Bash on Windows; test/support/platform.js locates it.
+      - name: Test
+        run: npm test

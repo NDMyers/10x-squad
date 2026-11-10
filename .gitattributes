@@ -1,0 +1,7 @@
+# Keep every text file LF in the working tree on every OS. Prompt assets are
+# composed by exact-marker substitution and shell scripts must run under bash.
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
