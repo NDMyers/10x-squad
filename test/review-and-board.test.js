@@ -520,7 +520,3 @@ test('inspectProjectBoard computes stage/agent bottleneck durations and tracks n
   assert.equal(verifyCard.state, 'rework');
   assert.equal(verifyCard.badge, '↺ rework -> build');
 });
-
-
-
-

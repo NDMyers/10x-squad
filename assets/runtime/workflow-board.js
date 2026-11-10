@@ -67,24 +67,45 @@ function loadAndUpdateTelemetry(projectDirectory, state, stats, options = {}) {
     phase_entered_at: {},
     phase_accumulated_ms: {},
     cycle_counts: { plan: 1, build: 1, verify: 1 },
+    ralph_started_in_review: false,
     loopbacks: [],
     last_loopback: null,
   };
 
+  let previousContent;
   if (fs.existsSync(telemetryPath)) {
+    previousContent = fs.readFileSync(telemetryPath, 'utf8');
+    let parsed;
     try {
-      const parsed = JSON.parse(fs.readFileSync(telemetryPath, 'utf8'));
-      if (parsed && typeof parsed === 'object') {
-        telemetry = {
-          ...telemetry,
-          ...parsed,
-          phase_entered_at: { ...telemetry.phase_entered_at, ...(parsed.phase_entered_at || {}) },
-          phase_accumulated_ms: { ...telemetry.phase_accumulated_ms, ...(parsed.phase_accumulated_ms || {}) },
-          cycle_counts: { ...telemetry.cycle_counts, ...(parsed.cycle_counts || {}) },
-          loopbacks: Array.isArray(parsed.loopbacks) ? parsed.loopbacks : [],
-        };
-      }
-    } catch {}
+      parsed = JSON.parse(previousContent);
+    } catch (error) {
+      throw new Error(`Invalid telemetry file ${telemetryPath}: ${error.message}`, { cause: error });
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`Invalid telemetry file ${telemetryPath}: expected an object`);
+    }
+    telemetry = {
+      ...telemetry,
+      ...parsed,
+      phase_entered_at: { ...telemetry.phase_entered_at, ...(parsed.phase_entered_at || {}) },
+      phase_accumulated_ms: { ...telemetry.phase_accumulated_ms, ...(parsed.phase_accumulated_ms || {}) },
+      cycle_counts: { ...telemetry.cycle_counts, ...(parsed.cycle_counts || {}) },
+      loopbacks: Array.isArray(parsed.loopbacks) ? parsed.loopbacks : [],
+    };
+  }
+
+  const lastLoopback = telemetry.last_loopback;
+  if (
+    lastLoopback &&
+    !telemetry.loopbacks.some(
+      (loop) =>
+        loop.at === lastLoopback.at &&
+        loop.from === lastLoopback.from &&
+        loop.to === lastLoopback.to &&
+        loop.cycle === lastLoopback.cycle
+    )
+  ) {
+    telemetry.loopbacks.push(lastLoopback);
   }
 
   const nowIso = state.updated_at || new Date().toISOString();
@@ -133,13 +154,19 @@ function loadAndUpdateTelemetry(projectDirectory, state, stats, options = {}) {
   if (telemetry.current_phase !== state.phase) {
     telemetry.current_phase = state.phase;
     telemetry.phase_entered_at[state.phase] = nowIso;
+    if (state.phase === 'REVIEW') {
+      telemetry.ralph_started_in_review = false;
+    }
+  }
+  if (state.phase === 'REVIEW' && /\bralph\b/i.test(state.next_action || '')) {
+    telemetry.ralph_started_in_review = true;
   }
 
   // Artifact-based loopback inference (when review.md or tests.md already exists during BUILD or PLAN)
   const hasDownstreamVerifyArtifact = Boolean(stats.review || stats.sentinel || stats.tests);
   if (state.phase === 'BUILD' && hasDownstreamVerifyArtifact) {
     telemetry.cycle_counts.build = Math.max(telemetry.cycle_counts.build || 1, 2);
-    if (!telemetry.last_loopback || telemetry.last_loopback.to !== 'BUILD') {
+    if (!telemetry.last_loopback) {
       telemetry.last_loopback = {
         from: stats.tests && (!stats.review || stats.tests.mtimeMs >= stats.review.mtimeMs) ? 'TEST' : 'REVIEW',
         to: 'BUILD',
@@ -147,10 +174,11 @@ function loadAndUpdateTelemetry(projectDirectory, state, stats, options = {}) {
         cycle: telemetry.cycle_counts.build,
         at: nowIso,
       };
+      telemetry.loopbacks.push(telemetry.last_loopback);
     }
   } else if (state.phase === 'PLAN' && (hasDownstreamVerifyArtifact || Boolean(stats.build))) {
     telemetry.cycle_counts.plan = Math.max(telemetry.cycle_counts.plan || 1, 2);
-    if (!telemetry.last_loopback || telemetry.last_loopback.to !== 'PLAN') {
+    if (!telemetry.last_loopback) {
       telemetry.last_loopback = {
         from: 'REVIEW',
         to: 'PLAN',
@@ -158,13 +186,15 @@ function loadAndUpdateTelemetry(projectDirectory, state, stats, options = {}) {
         cycle: telemetry.cycle_counts.plan,
         at: nowIso,
       };
+      telemetry.loopbacks.push(telemetry.last_loopback);
     }
   }
 
   if (options.persistTelemetry !== false) {
-    try {
-      fs.writeFileSync(telemetryPath, `${JSON.stringify(telemetry, null, 2)}\n`);
-    } catch {}
+    const content = `${JSON.stringify(telemetry, null, 2)}\n`;
+    if (content !== previousContent) {
+      fs.writeFileSync(telemetryPath, content);
+    }
   }
 
   return telemetry;
@@ -569,7 +599,10 @@ function inspectProjectBoard(projectDirectory, options = {}) {
   const peterActive = !peterDone && ['INTAKE', 'PLAN'].includes(state.phase);
 
   const buildFreshForBuildCycle =
-    Boolean(build) && (!isBuildLoopback || !latestVerifyMs || (stats.build && stats.build.mtimeMs > latestVerifyMs));
+    Boolean(build) &&
+    !isPlanLoopback &&
+    (!stats.spec || (stats.build && stats.build.mtimeMs >= stats.spec.mtimeMs)) &&
+    (!isBuildLoopback || !latestVerifyMs || (stats.build && stats.build.mtimeMs > latestVerifyMs));
   const linusDone =
     (buildFreshForBuildCycle && (phaseIdx > PHASE_ORDER.indexOf('BUILD') || (hasGateBuild && !isBuildLoopback))) ||
     isProjectComplete;
@@ -601,7 +634,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
     !isPlanLoopback &&
     (!stats.build || !stats.tests || stats.tests.mtimeMs >= stats.build.mtimeMs);
   const ralphDone = testsFreshForBuild || phaseIdx > PHASE_ORDER.indexOf('TEST') || isProjectComplete;
-  const ralphDispatchedInReview = state.phase === 'REVIEW' && /ralph/i.test(state.next_action || '');
+  const ralphDispatchedInReview = state.phase === 'REVIEW' && telemetry.ralph_started_in_review;
   const ralphActive = !ralphDone && (state.phase === 'TEST' || ralphDispatchedInReview);
 
   const nowMs = Date.now();
@@ -673,14 +706,9 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       ? Math.max(1000, nowMs - reviewStartMs)
       : 0;
 
-  const ralphSequentialStart =
-    stats.review?.mtimeMs && (!stats.tests || stats.tests.mtimeMs > stats.review.mtimeMs + 1000)
-      ? Math.max(stats.review.mtimeMs, stats.sentinel?.mtimeMs || 0)
-      : null;
-  const ralphStartMs =
-    ralphSequentialStart ||
-    Date.parse(telemetry.phase_entered_at.TEST || '') ||
-    reviewStartMs;
+  const ralphStartMs = telemetry.ralph_started_in_review
+    ? reviewStartMs
+    : Date.parse(telemetry.phase_entered_at.TEST || '') || reviewStartMs;
   const ralphEndMs = ralphDone
     ? stats.tests?.mtimeMs || Date.parse(state.updated_at) || ralphStartMs
     : null;
@@ -890,9 +918,10 @@ function inspectProjectBoard(projectDirectory, options = {}) {
   const planStageDurMs = planAgents.reduce((sum, a) => sum + (a.duration_ms || 0), 0);
   const buildStageDurMs = buildAgents.reduce((sum, a) => sum + (a.duration_ms || 0), 0);
   const verifyParallelWaveMs = Math.max(cobaltDurMs, includeSentinel ? sentinelDurMs : 0);
-  const verifyStageDurMs = ralphSequentialStart
-    ? verifyParallelWaveMs + ralphDurMs
-    : Math.max(verifyParallelWaveMs, ralphDurMs);
+  const ralphElapsedSinceReview = includeRalph && ralphDurMs > 0
+    ? Math.max(0, ralphStartMs - reviewStartMs) + ralphDurMs
+    : 0;
+  const verifyStageDurMs = Math.max(verifyParallelWaveMs, ralphElapsedSinceReview);
 
   const cards = [
     {
@@ -906,7 +935,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       cycle: planCycle,
       duration_ms: planStageDurMs,
       duration_label: formatDurationMs(planStageDurMs),
-      started_at_ms: planAgents.find((a) => a.state === 'active')?.started_at_ms || null,
+      started_at_ms: planAgents.some((a) => a.state === 'active') ? Math.round(nowMs - planStageDurMs) : null,
       detail: `${acIds.length} AC · ${kIds.length} K constraints`,
       subdetail: dIds.length > 0 ? `traces ${dIds.length} D# decisions` : 'spec + K# contract',
       ...deriveCardStatus('plan', planAgents, ['DELIBERATE', 'INTAKE', 'PLAN'], planCycle),
@@ -923,7 +952,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       cycle: buildCycle,
       duration_ms: buildStageDurMs,
       duration_label: formatDurationMs(buildStageDurMs),
-      started_at_ms: buildAgents.find((a) => a.state === 'active')?.started_at_ms || null,
+      started_at_ms: buildAgents.some((a) => a.state === 'active') ? Math.round(nowMs - buildStageDurMs) : null,
       detail:
         partition.mode === 'parallel_batches'
           ? `${partition.batches.length} isolated batches`
@@ -943,7 +972,7 @@ function inspectProjectBoard(projectDirectory, options = {}) {
       cycle: verifyCycle,
       duration_ms: verifyStageDurMs,
       duration_label: formatDurationMs(verifyStageDurMs),
-      started_at_ms: verifyAgents.find((a) => a.state === 'active')?.started_at_ms || null,
+      started_at_ms: verifyAgents.some((a) => a.state === 'active') ? Math.round(nowMs - verifyStageDurMs) : null,
       detail: review
         ? `${sharpness.verified_blocking}/${sharpness.submitted_blocking} blocking kept`
         : tests
@@ -3302,7 +3331,8 @@ function serveBoard({ projectDirectory, workspaceRoot, repoRoot, harness, port =
       payload = JSON.stringify(
         inspectProjectBoard(resolvedProjectDir, { workspaceRoot, repoRoot, harness })
       );
-    } catch {
+    } catch (error) {
+      console.error(`10x-squad board update failed: ${error.message}`);
       return;
     }
     for (const res of clients) {
@@ -3311,44 +3341,53 @@ function serveBoard({ projectDirectory, workspaceRoot, repoRoot, harness, port =
   };
 
   let debounceTimer = null;
-  const watcher = fs.watch(resolvedProjectDir, () => {
+  const watcher = fs.watch(resolvedProjectDir, (_event, filename) => {
+    if (filename && filename.toString() === 'telemetry.json') return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(broadcast, 25);
   });
 
   const server = http.createServer((req, res) => {
-    if (req.url === '/api/events') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      });
-      res.write('\n');
-      clients.add(res);
-      req.on('close', () => clients.delete(res));
-      return;
-    }
+    try {
+      if (req.url === '/api/events') {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+        res.write('\n');
+        clients.add(res);
+        req.on('close', () => clients.delete(res));
+        return;
+      }
 
-    if (req.url === '/api/board') {
+      if (req.url === '/api/board') {
+        const board = inspectProjectBoard(resolvedProjectDir, { workspaceRoot, repoRoot, harness });
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(board));
+        return;
+      }
+
+      if (req.url === '/api/simulate' && req.method === 'POST') {
+        runLiveSimulationOnDisk(resolvedProjectDir);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
       const board = inspectProjectBoard(resolvedProjectDir, { workspaceRoot, repoRoot, harness });
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(board));
-      return;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderHtmlDashboard(board));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: error.message }));
     }
-
-    if (req.url === '/api/simulate' && req.method === 'POST') {
-      runLiveSimulationOnDisk(resolvedProjectDir);
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-
-    const board = inspectProjectBoard(resolvedProjectDir, { workspaceRoot, repoRoot, harness });
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(renderHtmlDashboard(board));
   });
 
-  server.on('close', () => watcher.close());
+  server.on('close', () => {
+    clearTimeout(debounceTimer);
+    watcher.close();
+  });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
     server.listen(Number(port), '127.0.0.1', () => {

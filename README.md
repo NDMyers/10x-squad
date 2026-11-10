@@ -203,6 +203,12 @@ node .10x-squad/runtime/control.js generate-registry --projects-root <projects-d
 The project registry supports gradual migration: directories without `project.json` remain visible
 as `UNMANAGED`, but must receive validated state before the squad resumes them.
 
+The Workflow Monitor estimates agent and stage durations from phase transitions and artifact
+timestamps. Its `telemetry.json` records observed or inferred rework loops; durations and loops
+cannot reconstruct transitions that occurred before monitoring began. Parallel verification is
+counted as elapsed wall time, not the sum of overlapping agent durations. Invalid telemetry is
+reported rather than silently discarded.
+
 ## Development
 
 ```
