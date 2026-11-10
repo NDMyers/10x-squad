@@ -735,6 +735,40 @@ function atomicWriteJson(file, obj) {
   }
 }
 
+function resolveEffectiveProfile({ workspaceRoot, harness, tier, persona, env, homedir } = {}) {
+  const paths = configPaths({ workspaceRoot, env, homedir });
+  const wsRes = paths.workspace ? readConfigFile(paths.workspace) : { status: 'missing' };
+  if (wsRes.status === 'io_error') {
+    const message = `I/O failure reading configuration: ${wsRes.message}`;
+    return { ok: false, code: EXIT.IO, message, errors: [message] };
+  }
+  if (wsRes.status === 'corrupt') {
+    const message = `Corrupt configuration: ${wsRes.message} ${CONFIGURE_HINT}`;
+    return { ok: false, code: EXIT.CONFIG, message, errors: [message] };
+  }
+  const globalRes = readConfigFile(paths.global);
+  if (globalRes.status === 'io_error') {
+    const message = `I/O failure reading configuration: ${globalRes.message}`;
+    return { ok: false, code: EXIT.IO, message, errors: [message] };
+  }
+  if (globalRes.status === 'corrupt') {
+    const message = `Corrupt configuration: ${globalRes.message} ${CONFIGURE_HINT}`;
+    return { ok: false, code: EXIT.CONFIG, message, errors: [message] };
+  }
+  const res = resolve({
+    workspaceConfig: wsRes.status === 'ok' ? wsRes.config : null,
+    globalConfig: globalRes.status === 'ok' ? globalRes.config : null,
+    harness,
+    tier,
+    persona,
+  });
+  if (!res.ok) {
+    return { ...res, errors: [res.message] };
+  }
+  const result = { ...res, agent: `10x-${res.persona}` };
+  return { ...result, result };
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -1015,6 +1049,7 @@ module.exports = {
   removeProfile,
   effectiveProfile,
   resolve,
+  resolveEffectiveProfile,
   resolveAdvisory,
   configPaths,
   readConfigFile,

@@ -58,12 +58,12 @@ The squad maintains an unbroken decision chain via trace IDs:
 - **Einstein** assigns `D1..Dn` to every decision/assumption in his brief (Decision Table).
 - **Peter** must **consume or explicitly defer** every `D#`, assigns `AC1..ACn` to acceptance criteria, and compiles negative/security invariants into `## Constraints` (`K1..Kn`) whenever applicable. Each AC and K constraint tags its source decision: `(AC1 ← D2)`, `(K1 ← D2)`.
 - **Linus** cites the `AC#` and `K#` (plus `D#` where relevant) each changelist entry satisfies.
-- **Cobalt and Sentinel** lock blocking review findings to `AC#`, `K#`, `EC#`, or `DETERMINISTIC_BUG` with falsifiable `Proof:` lines (`file:line` + trigger).
+- **Cobalt and Sentinel** lock blocking review findings to `AC#`, `K#`, `EC#`, or `DETERMINISTIC_BUG` with falsifiable `Proof:` lines (`file:line` + trigger). Cobalt may instead cite `COVERAGE_GATE` with the SonarQube evidence format in its skill.
 - **Ralph** cites the `AC#` each test exercises.
 
 For a task with an Einstein brief, pass Peter the exact `brief.md` artifact rather than reconstructing its Decision Table in Vivaldi's payload. This makes INTAKE→PLAN a pointer handoff with no model-transcribed ID list.
 
-Run each command from the workspace root. Omit `--brief` when no Einstein brief exists.
+Run each command from the workspace root (if `.10x-squad/runtime/control.js` is not present in `$PWD`, such as in an isolated git worktree or a global-only install, run `node "$HOME/.10x-squad/runtime/control.js"` with the same arguments). Omit `--brief` when no Einstein brief exists.
 
 **PLAN → BUILD:**
 
@@ -134,7 +134,7 @@ Einstein conducts structured deliberation on ambiguous or complex requests. He s
 
 **Einstein does not write code or specs.** He produces briefs that Peter consumes.
 
-**Before invoking Einstein, load the `10x-einstein-deliberation` skill** for Einstein's full output templates and deliberation protocol.
+**Before invoking Einstein:** When dispatching the dedicated `10x-einstein` custom agent, its `10x-einstein-deliberation` instructions are already preloaded — do NOT call `skill` in Vivaldi's parent session. Load the `10x-einstein-deliberation` skill only when dispatching a generic subagent without preloaded persona instructions.
 
 1. Gather deliberation context: directory structure, framework config, existing patterns, relevant conventions.
 2. Invoke Einstein with cleaned request + context + output mode (A or B).
@@ -180,7 +180,7 @@ No code, no file plans, no acceptance criteria — those are Peter's domain.
 
 When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starting input — he does not re-derive the approach from scratch. If Peter finds issues with Einstein's recommendation, he raises a **DELIBERATION_DISPUTE** (max 1 cycle back to Einstein).
 
-**Before invoking Peter, load the `10x-peter-spec` skill** for Peter's full persona, output template, and spec validation checklist.
+**Before invoking Peter:** When dispatching the dedicated `10x-peter` custom agent, its `10x-peter-spec` instructions are already preloaded — do NOT call `skill` in Vivaldi's parent session. Load the `10x-peter-spec` skill only when dispatching a generic subagent without preloaded persona instructions.
 
 1. **Standard/Complex state:** transition `project.json` from INTAKE to PLAN before dispatching Peter.
 2. Send cleaned requirement + architecture context to Peter.
@@ -194,14 +194,12 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 ## Step 4 — BUILD (Linus)
 
-**Before invoking Linus, load the `10x-linus-build` skill** for Linus's full persona, output template, and self-check protocol.
+**Before invoking Linus:** When dispatching the dedicated `10x-linus` custom agent, its `10x-linus-build` instructions are already preloaded — do NOT call `skill` in Vivaldi's parent session. Load the `10x-linus-build` skill only when dispatching a generic subagent without preloaded persona instructions.
 
 1. Send spec + relevant file contents to Linus.
 2. Verify changes were applied.
-3. **Lint self-check:** If `.rb` files were changed, Linus runs `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` before commit and fixes any offenses found. Max 2 self-fix cycles. This is part of BUILD — Linus does not report done until lint is clean or cycles are exhausted.
-4. Save Linus's changelist to `build.md`, run the BUILD trace gate, and on success transition validated `project.json` from BUILD to REVIEW before dispatching reviewers.
-
-**Note:** The `rubocop_changed_lines` script lives at the workspace root (`/rubocop_changed_lines`). Run it from the target Rails repository so Git resolves that repository's working tree. After committing, confirm that commit with `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines <SHA>`.
+3. **Fast syntax/lint self-check:** Linus performs only a fast, file-scoped syntax/lint check on its touched files (`node --check` for `.js`/`.cjs`/`.mjs`, `ruby -c` plus `rubocop_changed_lines` when `.rb` files were changed and `/rubocop_changed_lines` exists, or targeted `tsc --noEmit` when fast). Linus does NOT run full test suites, E2E suites, or repo-wide builds during Step 4 — `advance-phase` (`verify-build`) checks syntax and scope mechanically, and Ralph owns test execution in Step 6. Max 2 self-fix cycles for syntax/lint offenses.
+4. Save Linus's changelist to `build.md`, run the BUILD trace gate (or `advance-phase --to REVIEW`), and on success transition validated `project.json` from BUILD to REVIEW before dispatching reviewers.
 
 ---
 
@@ -209,12 +207,12 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 > Skip for Trivial.
 
-**Before invoking Cobalt, load the `10x-cobalt-review` skill** for Cobalt's full persona, severity calibration, output template, and review validation checklist.
+**Before invoking Cobalt:** When dispatching the dedicated `10x-cobalt` custom agent, its `10x-cobalt-review` instructions are already preloaded — do NOT call `skill` in Vivaldi's parent session. Load the `10x-cobalt-review` skill only when dispatching a generic subagent without preloaded persona instructions.
 
-**Sentinel engagement:** If tier is **Complex** OR the diff touches a **sensitive surface** (Peter's `## Sensitive Surface` section is present, or Vivaldi detects auth/payments/migrations/external-input/PII in the diff), **also load the `10x-sentinel-review` skill** and run Sentinel **in parallel with Cobalt** in a separate context. Cobalt and Sentinel own disjoint domains — Cobalt never raises security findings when Sentinel is engaged, and Sentinel never raises style/logic findings.
+**Sentinel engagement:** If tier is **Complex** OR the diff touches a **sensitive surface** (Peter's `## Sensitive Surface` section is present, or Vivaldi detects auth/payments/migrations/external-input/PII in the diff), dispatch the dedicated `10x-sentinel` custom agent (or load `10x-sentinel-review` only when dispatching a generic subagent) and run Sentinel **in parallel with Cobalt** in a separate context. Cobalt and Sentinel own disjoint domains — Cobalt never raises security findings when Sentinel is engaged, and Sentinel never raises style/logic findings.
 
-1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section. For Standard and Complex tasks, you may dispatch Ralph (Step 6) concurrently in the same parallel verification wave as Cobalt/Sentinel so review and test execution overlap in wall-clock time; keep their context slices strictly separate per the Context Visibility Matrix.
-2. **Lint verification:** Reuse Linus's clean `rubocop_changed_lines` output from Step 4 unless uncommitted working-tree edits exist, in which case Cobalt runs `cd <target-repository> && ruby <workspace-root>/rubocop_changed_lines` once.
+1. Send changed files + lean spec to Cobalt. Include Architecture Decision Brief if it exists. If an existing SonarQube report for the current changes is accessible only through a tool unavailable to scoped Cobalt, retrieve it and pass Cobalt the report, source, and analyzed revision; do not rerun tests to obtain it. If Sentinel is engaged, send it the changed files + lean spec + the `## Sensitive Surface` section. For Standard and Complex tasks, you may dispatch Ralph (Step 6) concurrently in the same parallel verification wave as Cobalt/Sentinel so review and test execution overlap in wall-clock time; keep their context slices strictly separate per the Context Visibility Matrix.
+2. **Lint & test deduplication:** Reuse the `verify-build` syntax/scope output and Linus's lint report from Step 4 unless uncommitted working-tree edits exist. When Ralph runs concurrently in the parallel verification wave, Ralph owns test execution exclusively — Cobalt and Sentinel must NOT run test suites or build commands. Cobalt still checks any existing SonarQube changed-file coverage report without rerunning tests.
 3. **Deterministic review filtering & verdict routing:** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged), then run the deterministic review gate before acting on any finding:
 
    ```
@@ -238,7 +236,7 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 > Skip for Trivial and Lite.
 
-**Before invoking Ralph, load the `10x-ralph-test` skill** for Ralph's full persona, output template, and test execution protocol.
+**Before invoking Ralph:** When dispatching the dedicated `10x-ralph` custom agent, its `10x-ralph-test` instructions are already preloaded — do NOT call `skill` in Vivaldi's parent session. Load the `10x-ralph-test` skill only when dispatching a generic subagent without preloaded persona instructions.
 
 1. Send AC + Edge Cases + code to Ralph.
 2. Route on verdict:
@@ -265,6 +263,8 @@ Concise summary (3–5 lines): what was built, files changed, test results, know
 | **Cobalt** | Arch Decision Brief only | Lean spec (Appendix on SPEC_DISPUTE) | Changed files | Own | Never | Never | Never |
 | **Sentinel** | Brief Appendix on SPEC_DISPUTE only | Lean spec + Sensitive Surface section | Changed files | Never | Never | Never | Never |
 | **Ralph** | Never | AC + Edge Cases only | Changed files | Never | Own | Never | Never |
+
+Cobalt may also receive the existing SonarQube coverage report and its source/revision; this is not Ralph's test report.
 
 **Violating this matrix degrades output quality.**
 
@@ -359,9 +359,11 @@ node .10x-squad/runtime/control.js advance-phase \
    --project 10x-squad-artifacts/projects/{task-slug} \
    --to <PLAN|BUILD|REVIEW|TEST|DELIVER> \
    [--repo-root "$PWD"] \
-   [--workspace-root "$PWD"] \
-   [--harness <surface>]
+   --workspace-root "$PWD" \
+   --harness <surface>
 ```
+
+With `--harness`, missing, invalid, or unresolved persona routing fails before changing `project.json`; inspect `next_dispatches` and configure or reinstall the resolver. The `--harness` flag may be omitted only when next-persona resolution is not required.
 
 When `advance-phase` returns `builder_partition.mode: "parallel_batches"` (`>= 4` files across `>= 2` 100%-disjoint file communities), you may dispatch parallel `Linus` builders on those disjoint file sets; otherwise (`"single_builder"`), dispatch a single `Linus` builder to preserve seam integrity.
 

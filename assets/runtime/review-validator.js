@@ -70,6 +70,7 @@ function parseFindingBlock(block) {
   const citedK = extractIds(fullText, 'K');
   const citedEc = extractIds(fullText, 'EC');
   const isDeterministicBug = /\bDETERMINISTIC_BUG\b/i.test(fullText);
+  const isCoverageGate = /\bCOVERAGE_GATE\b/i.test(fullText);
 
   const proofLineMatch = /^\s*(?:-\s*)?\*\*?Proof:?\*\*?:?\s*(.+)$/im.exec(fullText)
     || /^\s*Proof:\s*(.+)$/im.exec(fullText);
@@ -89,6 +90,7 @@ function parseFindingBlock(block) {
       constraints: citedK,
       edge_cases: citedEc,
       deterministic_bug: isDeterministicBug,
+      coverage_gate: isCoverageGate,
     },
     proof,
     header: block.header,
@@ -137,7 +139,8 @@ function validateSingleReview({
       allCitedAc.length > 0
       || allCitedK.length > 0
       || allCitedEc.length > 0
-      || finding.citations.deterministic_bug;
+      || finding.citations.deterministic_bug
+      || finding.citations.coverage_gate;
 
     if (!hasAnyContractCitation) {
       demotionReasons.push('MISSING_CONTRACT_CITATION');
@@ -158,7 +161,20 @@ function validateSingleReview({
       demotionReasons.push('MISSING_FALSIFIABLE_PROOF');
     }
 
-    if (allowedCycleFiles !== null && finding.file && !allowedCycleFiles.has(finding.file)) {
+    if (finding.citations.coverage_gate) {
+      const coverage = /\bchanged-file coverage:\s*(\d+(?:\.\d+)?)%/i.exec(finding.proof || '');
+      if (!coverage || Number(coverage[1]) > 80 || !/\bSonarQube\b/i.test(finding.proof || '')) {
+        demotionReasons.push('INVALID_COVERAGE_EVIDENCE');
+        errors.push({ code: 'INVALID_COVERAGE_EVIDENCE', source, index: finding.index });
+      }
+    }
+
+    if (
+      allowedCycleFiles !== null
+      && finding.file
+      && !finding.citations.coverage_gate
+      && !allowedCycleFiles.has(finding.file)
+    ) {
       demotionReasons.push('OUT_OF_CYCLE_SCOPE');
     }
 

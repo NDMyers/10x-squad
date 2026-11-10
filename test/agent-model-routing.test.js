@@ -38,6 +38,17 @@ test('frontmatter has no model pin', () => {
   assert.ok(!/^model\s*:/m.test(frontmatter), 'Vivaldi parent model must stay manually selected (no model: pin)');
 });
 
+test('fallback dispatch names and capabilities are specific to the active Copilot surface', () => {
+  const { frontmatter, body } = readAgent();
+  assert.match(frontmatter, /^\s+- Explore$/m);
+  assert.match(frontmatter, /^\s+- explore$/m);
+  assert.match(body, /runSubagent.*`Explore`.*read-only/is);
+  assert.match(body, /Linus.*Ralph.*Cobalt.*stop/is);
+  assert.match(body, /`task`.*`general-purpose`/is);
+  assert.match(body, /node "\$HOME\/\.copilot\/skills\/10x-squad-configure-tiers\/scripts\/model-tier-config\.js"/);
+  assert.match(body, /node "\$HOME\/\.10x-squad\/runtime\/control\.js"/);
+});
+
 test('the persona-by-model-tier table and tier vocabulary are gone', () => {
   const { body } = readAgent();
   assert.ok(!/Higher-tier/i.test(body), 'obsolete Higher-tier vocabulary must be absent');

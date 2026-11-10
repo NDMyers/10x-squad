@@ -24,6 +24,8 @@ printf 'originator=%s\n' "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-none}"
 case "$PATH" in (*/Applications/ChatGPT.app/*) echo 'app_path=yes';; (*) echo 'app_path=no';; esac
 ```
 
+If the workspace resolver is absent, use `node "$HOME/.agents/skills/10x-squad-configure-tiers/scripts/model-tier-config.js"` with the same flags. Use the same path selection for `resolve-advisory`.
+
 - Both signals indicate the desktop app (a desktop originator **and** the app bundle on `PATH`) → the surface is `codex-app`.
 - Neither does → the surface is `codex-cli`.
 - **The signals disagree** → stop and report. Do not guess and do not prefer one: resolving the wrong surface's profile is a silent mis-route, which is worse than refusing to dispatch. Ask the user which surface this is and use their answer for the rest of the session.

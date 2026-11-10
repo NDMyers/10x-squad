@@ -3,7 +3,7 @@
 'use strict';
 
 const packageJson = require('../package.json');
-const { SKILL_DISCOVERY_ROOTS, installTenXSquad, uninstallTenXSquad } = require('../lib/installer');
+const { installTenXSquad, uninstallTenXSquad } = require('../lib/installer');
 const { main: runControl } = require('../assets/runtime/control');
 
 const CONTROL_COMMANDS = [
@@ -81,9 +81,10 @@ function printShadowWarning(shadowed = []) {
   }
 
   console.error('');
-  console.error(`Copilot loads skills from all of ${SKILL_DISCOVERY_ROOTS.join(', ')}, so a stale`);
+  console.error('Copilot can load these skill copies together, so a stale');
   console.error('copy can shadow the current one and reloading will not clear it.');
-  console.error('Fix: run `10x-squad install` with no --harness flag to sync every tree.');
+  console.error('Fix: run `10x-squad install` with no --harness flag to sync installed trees.');
+  console.error('Review any stale copies in roots the installer does not own separately.');
 }
 
 function parseInstallOptions(args) {
