@@ -9,16 +9,22 @@ const resolverPath = path.join('skills', '10x-squad-configure-tiers', 'scripts',
 function resolverCandidates({ workspaceRoot, harness }) {
   const home = os.homedir();
   const installRoot = path.resolve(__dirname, '..', '..');
-  const codex = typeof harness === 'string' && harness.startsWith('codex-');
+  const family = typeof harness === 'string' ? harness.split('-')[0] : '';
   const candidates = [];
+
+  // Each harness searches its own install root first, so a mixed install never
+  // resolves through another harness's (possibly older) copy of the engine.
+  function rootsFor(isHome) {
+    if (family === 'codex') return ['.agents', '.github', '.claude'];
+    if (family === 'claude') return ['.claude', '.github', '.agents'];
+    return isHome ? ['.copilot', '.github', '.agents', '.claude'] : ['.github', '.agents', '.claude'];
+  }
 
   function addRoot(root) {
     if (!root) return;
     const absoluteRoot = path.resolve(root);
     const isHome = home && absoluteRoot === path.resolve(home);
-    const roots = codex
-      ? ['.agents', '.github']
-      : (isHome ? ['.copilot', '.github', '.agents'] : ['.github', '.agents']);
+    const roots = rootsFor(isHome);
     for (const discoveryRoot of roots) {
       candidates.push(path.join(absoluteRoot, discoveryRoot, resolverPath));
     }

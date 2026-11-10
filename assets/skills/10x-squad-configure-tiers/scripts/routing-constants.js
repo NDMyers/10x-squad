@@ -64,6 +64,18 @@ const HARNESS_DISPATCH_CAPABILITIES = {
     reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     context_tier: ['auto'],
   },
+  // Claude Code: the subagent dispatch tool takes `model` and `effort` and no
+  // context parameter. The effort set is the one the dispatch tool enforces,
+  // recorded from each surface's own rejection error
+  // (docs/claude-code-harness-spike.md, C9) — not copied between surfaces.
+  'claude-cli': {
+    reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh', 'max'],
+    context_tier: ['auto'],
+  },
+  'claude-desktop': {
+    reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh', 'max'],
+    context_tier: ['auto'],
+  },
 };
 
 const DEFAULT_DISPATCH_CAPABILITY = {

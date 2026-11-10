@@ -18,6 +18,8 @@ const CONTROL_COMMANDS = [
   'render-board',
   'serve-board',
   'toggle-ui',
+  'open-dashboard',
+  'detect-surface',
 ];
 
 function printHelp() {
@@ -39,10 +41,14 @@ Commands:
   render-board            Render live ASCII, ANSI, HTML, or Markdown/Mermaid workflow board
   serve-board             Start local fs.watch + SSE live dashboard server for VS Code / Agents
   toggle-ui               Enable, disable, toggle, or inspect automatic Workflow Monitor UI
+  open-dashboard          Render a project's Workflow Monitor and open it in the default
+                          browser (Windows, macOS, Linux); prints its file: URL
+  detect-surface          Report the Claude Code routing surface (claude-cli |
+                          claude-desktop) from the calling shell's environment
 
 Options:
   -d, --directory <path>  Target project directory
-  --harness <name>        copilot | codex | all (default: all)
+  --harness <name>        copilot | codex | claude | all (default: all)
   --brief <path>          Optional deliberation brief for validate-handoff
   --spec <path>           Technical spec for validate-handoff / validate-review
   --build <path>          Optional build changelist for validate-handoff
@@ -81,7 +87,7 @@ function printShadowWarning(shadowed = []) {
   }
 
   console.error('');
-  console.error('Copilot can load these skill copies together, so a stale');
+  console.error('A harness can load these skill copies together, so a stale');
   console.error('copy can shadow the current one and reloading will not clear it.');
   console.error('Fix: run `10x-squad install` with no --harness flag to sync installed trees.');
   console.error('Review any stale copies in roots the installer does not own separately.');

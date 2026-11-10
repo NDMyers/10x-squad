@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 const { extractIds, extractSection, validateHandoff } = require('./handoff-validator');
 const { validateReview } = require('./review-validator');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
@@ -3500,6 +3501,7 @@ function ensureProjectWatcher(resolvedProjectDir, options = {}) {
     const child = spawn(process.execPath, ['-e', watcherScript], {
       detached: true,
       stdio: 'ignore',
+      windowsHide: true,
     });
     child.unref();
   } catch {}
@@ -3511,7 +3513,8 @@ function syncProjectDashboard(projectDirectory, options = {}) {
     env: options.env,
     homedir: options.homedir,
   });
-  if (!ui.enabled) {
+  // `force` renders on explicit request (open-dashboard) even with auto UI off.
+  if (!ui.enabled && !options.force) {
     return {
       enabled: false,
       auto_open: false,
@@ -3523,7 +3526,7 @@ function syncProjectDashboard(projectDirectory, options = {}) {
   const statePath = path.join(resolvedProjectDir, 'project.json');
   if (!fs.existsSync(statePath)) {
     return {
-      enabled: true,
+      enabled: ui.enabled,
       auto_open: ui.auto_open,
       scope: ui.scope,
       dashboard_path: null,
@@ -3546,10 +3549,11 @@ function syncProjectDashboard(projectDirectory, options = {}) {
     ensureProjectWatcher(resolvedProjectDir, options);
   }
   return {
-    enabled: true,
+    enabled: ui.enabled,
     auto_open: ui.auto_open,
     scope: ui.scope,
     dashboard_path: dashboardPath,
+    dashboard_url: dashboardUrl(dashboardPath),
     state_js_path: stateJsPath,
   };
 }
@@ -3572,6 +3576,7 @@ function toggleUi({
     return {
       ...current,
       dashboard_path: sync ? sync.dashboard_path : null,
+      dashboard_url: sync ? dashboardUrl(sync.dashboard_path) : null,
     };
   }
 
@@ -3623,11 +3628,56 @@ function toggleUi({
     path: targetPath,
     updated_at: updatedAt,
     dashboard_path: dashboardPath,
+    dashboard_url: dashboardUrl(dashboardPath),
+  };
+}
+
+// A file: URL built by hand from a Windows path (file://C:...) is invalid;
+// pathToFileURL yields file:///C:/... on Windows and file:///... elsewhere.
+function dashboardUrl(dashboardPath) {
+  return dashboardPath ? pathToFileURL(path.resolve(dashboardPath)).href : null;
+}
+
+// The platform's default URL handler, invoked without a shell so no path or
+// URL character is ever re-parsed. rundll32's FileProtocolHandler is what
+// Windows' own "open URL" verb uses and needs no cmd.exe quoting.
+function browserOpener(url, platform = process.platform) {
+  if (platform === 'win32') return { command: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] };
+  if (platform === 'darwin') return { command: 'open', args: [url] };
+  return { command: 'xdg-open', args: [url] };
+}
+
+// Opens the project's dashboard for harnesses without an integrated browser
+// tool (Claude Code, Codex, Copilot CLI). Regenerates it first so the page is
+// never older than project.json. Never throws for a missing opener: the URL is
+// always returned so the agent can hand it to the user instead.
+function openDashboard(projectDirectory, options = {}) {
+  const sync = syncProjectDashboard(projectDirectory, { ...options, force: true });
+  const dashboardPath = sync.dashboard_path;
+  if (!dashboardPath) {
+    return { ok: false, opened: false, url: null, reason: 'NO_PROJECT_STATE' };
+  }
+  const url = dashboardUrl(dashboardPath);
+  if (options.dryRun) {
+    return { ok: true, opened: false, url, dashboard_path: dashboardPath, opener: browserOpener(url, options.platform) };
+  }
+  const opener = browserOpener(url, options.platform);
+  const result = spawnSync(opener.command, opener.args, { stdio: 'ignore', windowsHide: true, timeout: 15000 });
+  const opened = !result.error && (result.status === 0 || result.status === null);
+  return {
+    ok: true,
+    opened,
+    url,
+    dashboard_path: dashboardPath,
+    ...(opened ? {} : { reason: result.error ? result.error.code || result.error.message : `exit ${result.status}` }),
   };
 }
 
 module.exports = {
+  browserOpener,
   computeSharpness,
+  dashboardUrl,
+  openDashboard,
   getUiConfig,
   inspectProjectBoard,
   renderAnsiBoard,

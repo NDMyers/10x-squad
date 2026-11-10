@@ -7,8 +7,11 @@
 #             and installer manifest covers every live skill. Must be 0 always.
 #   UPSTREAM  corpay-agents copies lag the live lineage. Fixed by PR-ing the
 #             company repo — Nick's call, not a local script's.
-#   PORT      Claude Code command stubs reference skill paths that don't
-#             resolve. Fixed by the installer's Claude target (ladder step 4).
+#   PORT      Legacy Claude Code command stubs (~/.claude/commands/10x*.md)
+#             reference skill paths that don't resolve. The installer's Claude
+#             target replaces them: `10x-squad install --directory ~ --harness
+#             claude` installs ~/.claude/skills, and /10x-squad supersedes the
+#             stubs. The workspace .claude/ tree itself is SOURCE-checked above.
 #
 # Canonical layout: this repo checked out inside the deploy workspace
 # (<workspace>/10x-squad). Set SQUAD_ROOT if your workspace lives elsewhere.
@@ -78,12 +81,12 @@ for (const discoveryRoot of installer.SKILL_DISCOVERY_ROOTS) {
   for (const entry of fs.readdirSync(absoluteRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || !entry.name.startsWith('10x-')) continue;
     for (const file of walkFiles(path.join(absoluteRoot, entry.name))) {
-      discovered.add(path.relative(root, file));
+      discovered.add(path.relative(root, file).split(path.sep).join('/'));
     }
   }
 }
 for (const file of walkFiles(path.join(root, '.10x-squad', 'runtime'))) {
-  discovered.add(path.relative(root, file));
+  discovered.add(path.relative(root, file).split(path.sep).join('/'));
 }
 for (const relative of [...discovered].sort((left, right) => left.localeCompare(right))) {
   if (!expectedTargets.has(path.normalize(relative))) {
@@ -158,7 +161,7 @@ fi
 
 total=$((src_fail + up_fail + port_fail))
 echo "UPSTREAM lag:      $up_fail   (resolve by PR to corpay-agents)"
-echo "PORT dangling:     $port_fail   (resolve via installer Claude target — ladder step 4)"
+echo "PORT dangling:     $port_fail   (resolve: 10x-squad install --directory ~ --harness claude, or delete the legacy stubs)"
 echo "TOTAL: $total"
 [ "$total" -eq 0 ] && exit 0
 exit 1

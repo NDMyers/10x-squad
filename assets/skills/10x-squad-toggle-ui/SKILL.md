@@ -26,6 +26,6 @@ The setting is persisted in `~/.config/10x-squad/ui.json` (global default) or `<
      [--project 10x-squad-artifacts/projects/<active-slug>]
    ```
 
-3. Consume the single-line JSON output (`{"ok":true,"enabled":true|false,"auto_open":true|false,"scope":"global"|"workspace","path":"...","dashboard_path":"..."}`):
-   - If `enabled` is `true` and an active project exists (so `dashboard_path` is returned), immediately open `file://<dashboard_path>` in the integrated browser (`openBrowserPage`) if available on the current surface.
+3. Consume the single-line JSON output (`{"ok":true,"enabled":true|false,"auto_open":true|false,"scope":"global"|"workspace","path":"...","dashboard_path":"...","dashboard_url":"file:///..."}`):
+   - If `enabled` is `true` and an active project exists (so `dashboard_path` is returned), immediately open `dashboard_url` (a correct `file:` URL on every OS) in the integrated browser (`openBrowserPage`) if the current surface has one; otherwise run `node .10x-squad/runtime/control.js open-dashboard --project <project_dir>` to open it in the OS default browser, or give the user the URL.
    - Report the new state (`Enabled` or `Disabled`), the config scope (`global` or `workspace`), and that Vivaldi will automatically open/skip the Workflow Monitor on squad runs.

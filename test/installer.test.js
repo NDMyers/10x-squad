@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const { symlinkOrSkip } = require('./support/platform');
 
 const packageRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(packageRoot, 'bin', '10x-squad.js');
@@ -34,7 +35,7 @@ function walkFiles(dir) {
   return out;
 }
 
-const { composeVivaldi, composePersonaAgents } = require('../lib/compose');
+const { PERSONA_AGENTS, composeClaudePersonaAgent, composeVivaldi, composePersonaAgents } = require('../lib/compose');
 const { detectShadowedSkills, installTenXSquad } = require('../lib/installer');
 
 // Same CLI-style args as runCli, but returns the structured install result so
@@ -53,7 +54,7 @@ function skillAssets(skillsRoot) {
     const skillDir = path.join(packageRoot, 'assets', 'skills', skillName);
     return walkFiles(skillDir).map((source) => ({
       source,
-      target: path.join(skillsRoot, skillName, path.relative(skillDir, source)),
+      target: path.posix.join(skillsRoot, skillName, path.relative(skillDir, source).split(path.sep).join('/')),
     }));
   });
 }
@@ -62,27 +63,35 @@ function skillAssets(skillsRoot) {
 // change has to be made in two places on purpose rather than drift silently.
 const harnessAssets = {
   copilot: [
-    { contents: () => composeVivaldi('copilot'), target: path.join('.github', 'agents', '10x-squad.agent.md') },
+    { contents: () => composeVivaldi('copilot'), target: path.posix.join('.github', 'agents', '10x-squad.agent.md') },
     ...composePersonaAgents().map((agent) => ({
       contents: agent.contents,
-      target: path.join('.github', 'agents', `${agent.name}.agent.md`),
+      target: path.posix.join('.github', 'agents', `${agent.name}.agent.md`),
     })),
-    ...skillAssets(path.join('.github', 'skills')),
+    ...skillAssets(path.posix.join('.github', 'skills')),
   ],
   codex: [
     {
       contents: () => composeVivaldi('codex'),
-      target: path.join('.agents', 'skills', '10x-squad-vivaldi', 'SKILL.md'),
+      target: path.posix.join('.agents', 'skills', '10x-squad-vivaldi', 'SKILL.md'),
     },
     {
       source: path.join(packageRoot, 'assets', 'vivaldi', 'openai.yaml'),
-      target: path.join('.agents', 'skills', '10x-squad-vivaldi', 'agents', 'openai.yaml'),
+      target: path.posix.join('.agents', 'skills', '10x-squad-vivaldi', 'agents', 'openai.yaml'),
     },
-    ...skillAssets(path.join('.agents', 'skills')),
+    ...skillAssets(path.posix.join('.agents', 'skills')),
+  ],
+  claude: [
+    { contents: () => composeVivaldi('claude'), target: path.posix.join('.claude', 'skills', '10x-squad', 'SKILL.md') },
+    ...Object.keys(PERSONA_AGENTS).map((persona) => ({
+      contents: () => composeClaudePersonaAgent(persona),
+      target: path.posix.join('.claude', 'agents', `${PERSONA_AGENTS[persona].name}.md`),
+    })),
+    ...skillAssets(path.posix.join('.claude', 'skills')),
   ],
 };
 
-const assets = [...harnessAssets.copilot, ...harnessAssets.codex];
+const assets = [...harnessAssets.copilot, ...harnessAssets.codex, ...harnessAssets.claude];
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-installer-'));
@@ -166,13 +175,13 @@ test('rerunning install replaces owned assets and preserves unrelated workspace 
   assert.equal(fs.readFileSync(unrelatedSkill, 'utf8'), 'keep skill\n');
 });
 
-test('install rejects a symlinked owned target without modifying its external destination', () => {
+test('install rejects a symlinked owned target without modifying its external destination', (t) => {
   const workspace = makeTempDir();
   const external = path.join(makeTempDir(), 'external-control.js');
   fs.writeFileSync(external, 'do not overwrite\n');
   const target = path.join(workspace, '.10x-squad', 'runtime', 'control.js');
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.symlinkSync(external, target);
+  if (!symlinkOrSkip(t, external, target)) return;
 
   const result = spawnSync(process.execPath, [cliPath, 'install', '--directory', workspace], {
     cwd: packageRoot,
@@ -184,10 +193,11 @@ test('install rejects a symlinked owned target without modifying its external de
   assert.equal(fs.readFileSync(external, 'utf8'), 'do not overwrite\n');
 });
 
-test('install rejects a symlinked parent directory without writing outside the workspace', () => {
+test('install rejects a symlinked parent directory without writing outside the workspace', (t) => {
   const workspace = makeTempDir();
   const external = makeTempDir();
-  fs.symlinkSync(external, path.join(workspace, '.github'));
+  // A junction needs no privilege on Windows and is still reported as a link.
+  if (!symlinkOrSkip(t, external, path.join(workspace, '.github'), 'junction')) return;
 
   const result = spawnSync(process.execPath, [cliPath, 'install', '--directory', workspace], {
     cwd: packageRoot,
@@ -260,9 +270,9 @@ test('asset enumeration is deterministic and sorted within each skill', () => {
   // Sortedness is a per-skill-directory invariant. Each harness installs the
   // same skills under its own root, so scope the check to one root at a time.
   const targets = JSON.parse(runs[0]);
-  for (const skillsRoot of [path.join('.github', 'skills'), path.join('.agents', 'skills')]) {
+  for (const skillsRoot of [path.posix.join('.github', 'skills'), path.posix.join('.agents', 'skills')]) {
     for (const skillName of skillNames) {
-      const prefix = path.join(skillsRoot, skillName) + path.sep;
+      const prefix = path.posix.join(skillsRoot, skillName) + '/';
       const inSkill = targets.filter((t) => t.startsWith(prefix));
       assert.ok(inSkill.length >= 1, `no assets enumerated for ${skillsRoot}/${skillName}`);
       assert.deepEqual(inSkill, [...inSkill].sort(), `assets for ${skillsRoot}/${skillName} must be sorted`);
@@ -288,8 +298,8 @@ test('reinstall preserves .10x-squad/model-routing.json and stays idempotent', (
 // the same skill name under two roots is loaded twice and one copy shadows the
 // other. A full install keeps them identical; these cover the drift cases.
 const skillRoots = {
-  copilot: path.join('.github', 'skills'),
-  codex: path.join('.agents', 'skills'),
+  copilot: path.posix.join('.github', 'skills'),
+  codex: path.posix.join('.agents', 'skills'),
 };
 
 function staleCopy(workspace, root, skillName = '10x-squad-configure-tiers') {
@@ -325,10 +335,10 @@ test('a single-harness install reports the other root left behind at an older re
 test('copilotHomeMirrorAssets mirrors agents and complete skills to .copilot', () => {
   const { copilotHomeMirrorAssets } = require('../lib/installer');
   const mirrored = copilotHomeMirrorAssets();
-  assert.equal(mirrored.length, 7 + skillAssets(path.join('.copilot', 'skills')).length);
-  assert.ok(mirrored.some((a) => a.target === path.join('.copilot', 'agents', '10x-squad.agent.md')));
-  assert.ok(mirrored.some((a) => a.target === path.join('.copilot', 'agents', '10x-linus.agent.md')));
-  assert.ok(mirrored.some((a) => a.target === path.join(
+  assert.equal(mirrored.length, 7 + skillAssets(path.posix.join('.copilot', 'skills')).length);
+  assert.ok(mirrored.some((a) => a.target === path.posix.join('.copilot', 'agents', '10x-squad.agent.md')));
+  assert.ok(mirrored.some((a) => a.target === path.posix.join('.copilot', 'agents', '10x-linus.agent.md')));
+  assert.ok(mirrored.some((a) => a.target === path.posix.join(
     '.copilot', 'skills', '10x-squad-configure-tiers', 'scripts', 'model-tier-config.js'
   )));
 });
@@ -342,14 +352,23 @@ test('reinstalling every harness clears a previously shadowed skill', () => {
   assert.deepEqual(runInstall(['install'], workspace).shadowed, []);
 });
 
-test('a stale copy in .claude/skills shadows even though the installer never writes there', () => {
+test('a stale copy in .claude/skills shadows an install that did not include the Claude harness', () => {
   const workspace = makeTempDir();
-  staleCopy(workspace, path.join('.claude', 'skills'));
+  staleCopy(workspace, path.posix.join('.claude', 'skills'));
+
+  const result = runInstall(['install', '--harness', 'copilot'], workspace);
+
+  assert.equal(result.shadowed.length, 1);
+  assert.deepEqual(result.shadowed[0].staleRoots, [path.posix.join('.claude', 'skills')]);
+});
+
+test('a full install rewrites a stale .claude/skills copy, so nothing is shadowed', () => {
+  const workspace = makeTempDir();
+  staleCopy(workspace, path.posix.join('.claude', 'skills'));
 
   const result = runInstall(['install'], workspace);
 
-  assert.equal(result.shadowed.length, 1);
-  assert.deepEqual(result.shadowed[0].staleRoots, [path.join('.claude', 'skills')]);
+  assert.deepEqual(result.shadowed, []);
 });
 
 test('one stale copy alone is not reported — it shadows nothing', () => {
@@ -521,6 +540,49 @@ test('install --harness codex writes only the Codex tree', () => {
   assertInstalledAssets(workspace, harnessAssets.codex);
   assert.equal(fs.existsSync(path.join(workspace, '.agents')), true);
   assert.equal(fs.existsSync(path.join(workspace, '.github')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.claude')), false);
+});
+
+test('install --harness claude writes only the Claude Code tree', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install', '--harness', 'claude'], workspace);
+
+  assertInstalledAssets(workspace, harnessAssets.claude);
+  assert.equal(fs.existsSync(path.join(workspace, '.claude', 'skills', '10x-squad', 'SKILL.md')), true);
+  for (const persona of Object.values(PERSONA_AGENTS)) {
+    assert.equal(fs.existsSync(path.join(workspace, '.claude', 'agents', `${persona.name}.md`)), true, persona.name);
+  }
+  assert.equal(fs.existsSync(path.join(workspace, '.10x-squad', 'runtime', 'surface.js')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.github')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+});
+
+test('a Claude install never writes Claude Code settings', () => {
+  // Permission for the runtime comes from the skill's allowed-tools, so the
+  // installer has no reason to touch the user's .claude/settings*.json.
+  const workspace = makeTempDir();
+  fs.mkdirSync(path.join(workspace, '.claude'));
+  fs.writeFileSync(path.join(workspace, '.claude', 'settings.json'), '{"keep":true}\n');
+
+  runCli(['install', '--harness', 'claude'], workspace);
+  runCli(['uninstall', '--harness', 'claude'], workspace);
+
+  assert.equal(fs.readFileSync(path.join(workspace, '.claude', 'settings.json'), 'utf8'), '{"keep":true}\n');
+  assert.equal(fs.existsSync(path.join(workspace, '.claude', 'settings.local.json')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.claude', 'agents')), false, 'emptied agents dir is pruned');
+});
+
+test('uninstalling Claude keeps the runtime while another harness remains', () => {
+  const workspace = makeTempDir();
+
+  runCli(['install', '--harness', 'claude'], workspace);
+  runCli(['install', '--harness', 'codex'], workspace);
+  runCli(['uninstall', '--harness', 'claude'], workspace);
+
+  assert.equal(fs.existsSync(path.join(workspace, '.claude')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.10x-squad', 'runtime', 'control.js')), true);
+  assertInstalledAssets(workspace, harnessAssets.codex);
 });
 
 test('install defaults to every harness', () => {
@@ -531,6 +593,7 @@ test('install defaults to every harness', () => {
   assertInstalledAssets(workspace);
   assert.equal(fs.existsSync(path.join(workspace, '.github', 'agents', '10x-squad.agent.md')), true);
   assert.equal(fs.existsSync(path.join(workspace, '.agents', 'skills', '10x-squad-vivaldi', 'SKILL.md')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.claude', 'skills', '10x-squad', 'SKILL.md')), true);
 });
 
 test('install rejects an unknown harness without writing anything', () => {

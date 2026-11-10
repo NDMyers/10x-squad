@@ -111,6 +111,7 @@ test('the Codex entrypoint is named as a skill and the Copilot one as an agent',
 
   assert.match(codex.frontmatter, /^name: 10x-squad-vivaldi$/m);
   assert.match(copilot.frontmatter, /^name: 10x-squad$/m);
+  assert.match(frontmatterAndBody(composeVivaldi('claude')).frontmatter, /^name: 10x-squad$/m);
 });
 
 test('dispatch sections do not cross surfaces', () => {
@@ -125,6 +126,33 @@ test('dispatch sections do not cross surfaces', () => {
   // ...and Codex's must not appear in Copilot's.
   for (const codexOnly of ['spawn_agent', 'codex-app', 'wait_agent']) {
     assert.ok(!copilot.includes(codexOnly), `Copilot entrypoint must not reference ${codexOnly}`);
+  }
+
+  // Claude Code's actuators and surfaces must not leak into either, nor theirs into Claude's.
+  const claude = composeVivaldi('claude');
+  for (const claudeOnly of ['subagent_type', 'claude-desktop', 'claude-cli', 'detect-surface']) {
+    assert.ok(!copilot.includes(claudeOnly), `Copilot entrypoint must not reference ${claudeOnly}`);
+    assert.ok(!codex.includes(claudeOnly), `Codex entrypoint must not reference ${claudeOnly}`);
+  }
+  for (const foreign of ['runSubagent', 'spawn_agent', 'wait_agent', 'codex-app', 'copilot-cli']) {
+    assert.ok(!claude.includes(foreign), `Claude entrypoint must not reference ${foreign}`);
+  }
+});
+
+test('composition is identical whatever the checkout line endings are', () => {
+  // A Windows checkout with core.autocrlf=true must compose the same bytes.
+  const fsModule = require('node:fs');
+  const original = fsModule.readFileSync;
+  const expected = Object.keys(harnessEntrypoints).map((harness) => composeVivaldi(harness));
+  fsModule.readFileSync = function crlf(file, ...rest) {
+    const content = original.call(this, file, ...rest);
+    return typeof content === 'string' ? content.replace(/\n/g, '\r\n') : content;
+  };
+  try {
+    const actual = Object.keys(harnessEntrypoints).map((harness) => composeVivaldi(harness));
+    assert.deepEqual(actual, expected);
+  } finally {
+    fsModule.readFileSync = original;
   }
 });
 

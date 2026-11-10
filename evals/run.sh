@@ -36,8 +36,8 @@ VARIANT_ID="$(node -e 'const crypto=require("node:crypto"); process.stdout.write
 
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
   case "$HARNESS" in
-    copilot-cli|codex-cli) ;;
-    *) echo "EVAL_HARNESS must be copilot-cli or codex-cli" >&2; exit 2 ;;
+    copilot-cli|codex-cli|claude-cli) ;;
+    *) echo "EVAL_HARNESS must be copilot-cli, codex-cli, or claude-cli" >&2; exit 2 ;;
   esac
   MODEL="${EVAL_MODEL:?EVAL_MODEL is required for real runs}"
   ROUTING_CONFIG="${EVAL_ROUTING_CONFIG:?EVAL_ROUTING_CONFIG is required for real runs}"
@@ -74,6 +74,9 @@ json_field() {
 
 for task_dir in "${TASKS[@]}"; do
   task_dir="${task_dir%/}"
+  # Absolute, because the check runs from inside the task's workspace: a
+  # relative task path (evals/tasks/x) would no longer resolve there.
+  [ -d "$task_dir" ] && task_dir="$(cd "$task_dir" && pwd)"
   name="$(basename "$task_dir")"
   [ -f "$task_dir/prompt.md" ] || { echo "SKIP $name: no prompt.md" >&2; continue; }
   [ -x "$task_dir/check.sh" ] || { echo "SKIP $name: no executable check.sh" >&2; continue; }
