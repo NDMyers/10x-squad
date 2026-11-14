@@ -15,9 +15,10 @@
 const TIER_KEYS = ['trivial', 'lite', 'standard_clear', 'standard_ambiguous', 'complex'];
 
 // The six dispatchable personas, in pipeline order (assets/vivaldi/core.md).
-// Routing is a (persona, tier) coordinate: the same task tier can warrant a
-// frontier model for the personas that plan and gate the work and a cheaper one
-// for the persona that executes an already-reviewed spec.
+// Routing is a (persona, tier) coordinate: personas at the same task tier need
+// different profiles. The builder is not the cheap seat — it makes most of the
+// decisions that set the quality of the result — so the coordinate exists to
+// let each role be configured for what it actually does.
 //
 // Vivaldi is deliberately absent. It is always the root session and cannot set
 // its own model, so it is never a dispatch target — see ADVISORY_KEYS.

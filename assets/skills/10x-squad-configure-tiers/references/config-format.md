@@ -2,7 +2,7 @@
 
 One squad-wide configuration maps each **(persona, work tier)** pair to a work-tier profile: one exact, surface-native model plus reasoning and context choices, per harness. Six dispatchable personas × five work tiers is a 30-cell matrix. Personas never carry model policy in their own skill files — the persona is a coordinate Vivaldi passes to the resolver on every dispatch, and Vivaldi resolves each persona's own profile.
 
-Routing on `(persona, tier)` separates two things that a tier-only key conflates: how hard the task is, and how much reasoning the role needs. A Complex task can warrant a frontier model at maximum effort for the personas that plan and gate the work, and a cheaper model for the persona executing an already-reviewed spec.
+Routing on `(persona, tier)` separates two things that a tier-only key conflates: how hard the task is, and how much reasoning the role needs. The roles need different profiles at the same tier. The builder makes most of the decisions that set the quality of the result, so it is not the seat to economize on; a cheaper model earns its place where a machine can check the output.
 
 ## Locations and precedence
 

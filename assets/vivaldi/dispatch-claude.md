@@ -1,6 +1,6 @@
 ## Model Routing
 
-**Persona × work-tier** → profiles are user-configured per harness via the `10x-squad-configure-tiers` skill. On Claude Code each profile contains one model and one effort choice. Routing is a `(persona, tier)` coordinate: the same task tier can warrant a frontier model at high effort for the personas that plan and gate the work, and a cheaper one for the persona executing an already-reviewed spec. The persona is a coordinate the orchestrator supplies to the resolver, never metadata a skill declares. `context_tier` has no per-dispatch Claude Code analog: it is always `auto` and is never passed. Persona agents carry no routing policy and no `model:` pin, and Vivaldi never chooses these values from memory, tables, or defaults — it resolves them. The user selects Vivaldi's own parent model in the harness (`/model`).
+**Persona × work-tier** → profiles are user-configured per harness via the `10x-squad-configure-tiers` skill. On Claude Code each profile contains one model and one effort choice. Routing is a `(persona, tier)` coordinate: personas at the same task tier need different profiles. The builder makes most of the decisions that set the quality of the result, so it is not the seat to economize on; a cheaper model earns its place where a machine can check the output. The persona is a coordinate the orchestrator supplies to the resolver, never metadata a skill declares. `context_tier` has no per-dispatch Claude Code analog: it is always `auto` and is never passed. Persona agents carry no routing policy and no `model:` pin, and Vivaldi never chooses these values from memory, tables, or defaults — it resolves them. The user selects Vivaldi's own parent model in the harness (`/model`).
 
 **Run every command in this section with the Bash tool.** Claude Code provides a POSIX shell for the Bash tool on Windows (Git Bash), macOS, and Linux, so the commands below are valid on every OS. Do not translate them for PowerShell or cmd.
 
@@ -57,6 +57,14 @@ If `.10x-squad/runtime/control.js` is not present in the workspace, run `node ~/
    - If the dispatch tool rejects the model or effort value, **hard-block before launch**; never drop the argument or substitute another value. Rejections are loud and pre-launch and enumerate the accepted set, which is the surface's authoritative availability source. A stored assignment can become invalid without any local change (the accepted set is account- and version-dependent): report it as a configuration failure.
 6. **Collect results before advancing.** A dispatch may complete inline, or it may return a background-launch acknowledgement whose result arrives later as a task notification (the desktop app does this). Never advance a gate, never run `advance-phase`, and never describe a persona's output until that persona's result has actually arrived; never predict or fabricate a pending result.
 7. **Executed-model confirmation is not available inside the session.** The dispatch result does not report the child's model. Accepted dispatch arguments are the in-session evidence; the pre-launch rejection of an invalid model is the backstop. Do not claim executed-model verification. (The eval harness verifies executed models from `claude -p --output-format stream-json`, where child turns carry `message.model`.)
+
+### Continuing the same builder
+
+When a revision, a review finding, or an advisor's answer goes back to Linus, continue the Linus you already dispatched instead of starting a new one: send the follow-up to that agent by the id or name its dispatch returned (the `SendMessage` tool), so it keeps the context in which it made its choices. A continued agent keeps the model and effort it was dispatched with; announce the routing line again with `(continued)`. If the agent can no longer be continued, dispatch a new Linus and give it `build.md`, the current diff, and the findings.
+
+### Cost capture
+
+A dispatch result usually ends with a usage block (total tokens, tool uses, duration). Copy those figures into the project's `cost.md` row for that dispatch when the result arrives. If a result carries no usage block, write `not captured`; never estimate.
 
 ### Concurrency and depth
 

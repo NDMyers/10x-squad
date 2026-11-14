@@ -1,6 +1,6 @@
 'use strict';
 
-const { digestText, extractIds, extractSection } = require('./handoff-validator');
+const { digestText, extractIds, extractSection, parseExperienceCriteria } = require('./handoff-validator');
 
 const VALID_VERDICTS = new Set(['APPROVE', 'REQUEST_CHANGES', 'SPEC_DISPUTE']);
 const SEVERITIES = new Set(['CRITICAL', 'MAJOR', 'MINOR']);
@@ -69,6 +69,8 @@ function parseFindingBlock(block) {
   const citedAc = extractIds(fullText, 'AC');
   const citedK = extractIds(fullText, 'K');
   const citedEc = extractIds(fullText, 'EC');
+  const citedQ = extractIds(fullText, 'Q');
+  const isProductDefect = /\bPRODUCT_DEFECT\b/.test(fullText);
   const isDeterministicBug = /\bDETERMINISTIC_BUG\b/i.test(fullText);
   const isCoverageGate = /\bCOVERAGE_GATE\b/i.test(fullText);
 
@@ -89,12 +91,34 @@ function parseFindingBlock(block) {
       acceptance_criteria: citedAc,
       constraints: citedK,
       edge_cases: citedEc,
+      experience_criteria: citedQ,
+      product_defect: isProductDefect,
       deterministic_bug: isDeterministicBug,
       coverage_gate: isCoverageGate,
     },
     proof,
+    // Only an explicit `Proof:` line can carry an observation; an inline
+    // `file:line` reference says where code is, not what the product did.
+    stated_proof: proofLineMatch ? proofLineMatch[1].trim() : null,
     header: block.header,
   };
+}
+
+// The reviewer's account of using the running product. `RUN` or `NOT_RUN` on
+// the first line, then one grade per experience criterion:
+//   - (Q1) 3/5, threshold 4 — FAIL — sprites read as noise at 1x
+function parseProductCheck(reviewText) {
+  const declared = /^##\s+Product Check\s*$/m.test(reviewText);
+  const section = extractSection(reviewText, 'Product Check');
+  const statusMatch = /^\s*(?:-\s*)?(?:\*\*)?(NOT_RUN|RUN)\b/m.exec(section);
+  const grades = {};
+  for (const line of section.split(/\r?\n/)) {
+    const match = /^\s*-\s+\((Q\d+)\)\s+.*?\b(PASS|FAIL|NOT_GRADED)\b/.exec(line);
+    if (match) {
+      grades[match[1]] = match[2];
+    }
+  }
+  return { declared, status: statusMatch ? statusMatch[1] : null, grades };
 }
 
 function validateSingleReview({
@@ -104,6 +128,7 @@ function validateSingleReview({
   validAc,
   validK,
   validEc,
+  validQ,
   allowedCycleFiles,
 }) {
   const statedVerdict = parseVerdict(reviewText);
@@ -135,10 +160,18 @@ function validateSingleReview({
     const allCitedAc = finding.citations.acceptance_criteria;
     const allCitedK = finding.citations.constraints;
     const allCitedEc = finding.citations.edge_cases;
+    // `Q<n>` is only a citation when the spec names experience criteria;
+    // otherwise it is ordinary prose ("since Q3") and must not demote a finding.
+    const allCitedQ = validQ.size > 0 ? finding.citations.experience_criteria : [];
+    // A product finding is about what the running product did, so it is proved
+    // by an observation and need not name a file. Without this route a reviewer
+    // who used the product and found it wanting could only file a MINOR.
+    const isProductFinding = finding.citations.product_defect || allCitedQ.length > 0;
     const hasAnyContractCitation =
       allCitedAc.length > 0
       || allCitedK.length > 0
       || allCitedEc.length > 0
+      || isProductFinding
       || finding.citations.deterministic_bug
       || finding.citations.coverage_gate;
 
@@ -149,16 +182,23 @@ function validateSingleReview({
     const unknownAc = allCitedAc.filter((id) => !validAc.has(id));
     const unknownK = allCitedK.filter((id) => !validK.has(id));
     const unknownEc = allCitedEc.filter((id) => !validEc.has(id));
-    if (unknownAc.length > 0 || unknownK.length > 0 || unknownEc.length > 0) {
+    const unknownQ = allCitedQ.filter((id) => !validQ.has(id));
+    if (unknownAc.length > 0 || unknownK.length > 0 || unknownEc.length > 0 || unknownQ.length > 0) {
       demotionReasons.push('UNKNOWN_CONTRACT_ID');
     }
 
-    if (!finding.file) {
-      demotionReasons.push('MISSING_FILE_PATH');
-    }
+    if (isProductFinding) {
+      if (!finding.stated_proof || !/\bobserved\b/i.test(finding.stated_proof)) {
+        demotionReasons.push('MISSING_OBSERVATION_PROOF');
+      }
+    } else {
+      if (!finding.file) {
+        demotionReasons.push('MISSING_FILE_PATH');
+      }
 
-    if (!finding.proof || finding.proof.length < 3) {
-      demotionReasons.push('MISSING_FALSIFIABLE_PROOF');
+      if (!finding.proof || finding.proof.length < 3) {
+        demotionReasons.push('MISSING_FALSIFIABLE_PROOF');
+      }
     }
 
     if (finding.citations.coverage_gate) {
@@ -172,6 +212,7 @@ function validateSingleReview({
     if (
       allowedCycleFiles !== null
       && finding.file
+      && !isProductFinding
       && !finding.citations.coverage_gate
       && !allowedCycleFiles.has(finding.file)
     ) {
@@ -220,6 +261,8 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
   const validAc = new Set(extractIds(extractSection(spec, 'Acceptance Criteria'), 'AC'));
   const validK = new Set(extractIds(extractSection(spec, 'Constraints'), 'K'));
   const validEc = new Set(parseEdgeCaseIds(spec));
+  const experienceCriteria = [...new Set(parseExperienceCriteria(spec))];
+  const validQ = new Set(experienceCriteria);
 
   let allowedCycleFiles = null;
   if (previousReview !== undefined) {
@@ -237,6 +280,7 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
       validAc,
       validK,
       validEc,
+      validQ,
       allowedCycleFiles,
     }),
   ];
@@ -250,6 +294,7 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
         validAc,
         validK,
         validEc,
+        validQ,
         allowedCycleFiles,
       })
     );
@@ -262,10 +307,47 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
   const demotedFindings = allFindings.filter((f) => f.status === 'demoted');
   const advisoryFindings = allFindings.filter((f) => f.status === 'advisory');
 
+  // Product check: Cobalt's alone (Sentinel reviews the diff, not the product).
+  // It is evaluated only when the spec names experience criteria or the review
+  // declares the section, so reviews that predate it validate unchanged.
+  const parsedProductCheck = parseProductCheck(review);
+  let productCheck = null;
+  if (experienceCriteria.length > 0 || parsedProductCheck.declared) {
+    const grades = Object.fromEntries(
+      Object.entries(parsedProductCheck.grades).filter(([id]) => validQ.has(id))
+    );
+    const ungraded = experienceCriteria.filter((id) => !(id in grades));
+    const failed = experienceCriteria.filter((id) => grades[id] === 'FAIL');
+    const notGraded = experienceCriteria.filter((id) => grades[id] === 'NOT_GRADED');
+    if (parsedProductCheck.status === null) {
+      errors.push({ code: 'MISSING_PRODUCT_CHECK_STATUS', source: 'cobalt' });
+    }
+    if (ungraded.length > 0) {
+      errors.push({ code: 'UNGRADED_EXPERIENCE_CRITERIA', source: 'cobalt', ids: ungraded });
+    }
+    // A reviewer who did not run the product cannot have passed a criterion
+    // that is only decidable by using it.
+    const passedUnseen = parsedProductCheck.status === 'NOT_RUN'
+      ? experienceCriteria.filter((id) => grades[id] === 'PASS')
+      : [];
+    if (passedUnseen.length > 0) {
+      errors.push({ code: 'GRADED_WITHOUT_RUNNING', source: 'cobalt', ids: passedUnseen });
+    }
+    productCheck = {
+      status: parsedProductCheck.status,
+      grades,
+      failed,
+      not_graded: notGraded,
+      // True whenever the review cannot vouch for the running product. DELIVER
+      // must carry this forward instead of reporting the approval as coverage.
+      unverified: parsedProductCheck.status !== 'RUN' || notGraded.length > 0,
+    };
+  }
+
   let effectiveVerdict = 'APPROVE';
   if (reviews.some((r) => r.stated_verdict === 'SPEC_DISPUTE')) {
     effectiveVerdict = 'SPEC_DISPUTE';
-  } else if (verifiedBlocking.length > 0) {
+  } else if (verifiedBlocking.length > 0 || (productCheck !== null && productCheck.failed.length > 0)) {
     effectiveVerdict = 'REQUEST_CHANGES';
   }
 
@@ -283,6 +365,7 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
     verified_findings: verifiedBlocking,
     demoted_findings: demotedFindings,
     advisory_findings: advisoryFindings,
+    ...(productCheck === null ? {} : { product_check: productCheck }),
     input_hashes: {
       spec: digestText(spec),
       review: digestText(review),
@@ -296,6 +379,7 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
 module.exports = {
   parseEdgeCaseIds,
   parseFindingBlocks,
+  parseProductCheck,
   parseVerdict,
   validateReview,
 };
