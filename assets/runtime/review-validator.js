@@ -113,7 +113,9 @@ function parseProductCheck(reviewText) {
   const statusMatch = /^\s*(?:-\s*)?(?:\*\*)?(NOT_RUN|RUN)\b/m.exec(section);
   const grades = {};
   for (const line of section.split(/\r?\n/)) {
-    const match = /^\s*-\s+\((Q\d+)\)\s+.*?\b(PASS|FAIL|NOT_GRADED)\b/.exec(line);
+    // Reviewers decorate: `- **(Q1) 4/5, threshold 4 — PASS.**` is the same
+    // grade as `- (Q1) 4/5, threshold 4 — PASS`. Parse what was meant.
+    const match = /^\s*[-*]\s+[*_`]*\(?(Q\d+)\)?[*_`]*[\s:—–-]+.*?\b(PASS|FAIL|NOT_GRADED)\b/.exec(line);
     if (match) {
       grades[match[1]] = match[2];
     }
@@ -166,12 +168,24 @@ function validateSingleReview({
     // A product finding is about what the running product did, so it is proved
     // by an observation and need not name a file. Without this route a reviewer
     // who used the product and found it wanting could only file a MINOR.
-    const isProductFinding = finding.citations.product_defect || allCitedQ.length > 0;
+    const citesProduct = finding.citations.product_defect || allCitedQ.length > 0;
+    const citesContract =
+      allCitedAc.length > 0
+      || allCitedK.length > 0
+      || allCitedEc.length > 0
+      || finding.citations.deterministic_bug
+      || finding.citations.coverage_gate;
+    // A finding that cites the contract is judged by the contract rules even
+    // when it also names an experience criterion: `(AC9, Q4)` with a file and a
+    // proof is a contract finding, and must not be demoted for lacking the
+    // product-finding form. Only a finding that rests on the product alone is
+    // held to the observation rule.
+    const isProductFinding = citesProduct && !citesContract;
     const hasAnyContractCitation =
       allCitedAc.length > 0
       || allCitedK.length > 0
       || allCitedEc.length > 0
-      || isProductFinding
+      || citesProduct
       || finding.citations.deterministic_bug
       || finding.citations.coverage_gate;
 
@@ -188,7 +202,10 @@ function validateSingleReview({
     }
 
     if (isProductFinding) {
-      if (!finding.stated_proof || !/\bobserved\b/i.test(finding.stated_proof)) {
+      // The proof must be stated outright — an inline `file:line` says where
+      // code is, not what the product did — but its wording is the reviewer's.
+      // Requiring a keyword here once turned a real MAJOR into an APPROVE.
+      if (!finding.stated_proof || finding.stated_proof.length < 12) {
         demotionReasons.push('MISSING_OBSERVATION_PROOF');
       }
     } else {

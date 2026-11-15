@@ -228,6 +228,51 @@ test('a product finding with no observation is demoted like any other unproven f
   assert.deepEqual(result.demoted_findings[0].demotion_reasons, ['MISSING_OBSERVATION_PROOF']);
 });
 
+// Regression: taken from the first real review the gate saw (Dusty Dash run E).
+// The reviewer bolded the grade lines and cited a contract finding against an
+// experience criterion as well; the gate read no grades and demoted the MAJOR,
+// turning the reviewer's REQUEST_CHANGES into APPROVE.
+test('grades written with markdown emphasis are still grades', () => {
+  const productCheck = `
+## Product Check
+RUN — headless, in Node, against the real simulation and renderer.
+
+- **(Q1) 4/5, threshold 4 — PASS.** Every item met in the running sim.
+- **Q2** — 3/5, threshold 4 — FAIL — hill strip shows a seam
+`;
+  const result = validateReview({ spec, review: review({ productCheck }) });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.product_check.grades, { Q1: 'PASS', Q2: 'FAIL' });
+  assert.equal(result.effective_verdict, 'REQUEST_CHANGES');
+});
+
+test('a contract finding that also names an experience criterion is judged by the contract rules', () => {
+  const findings = `1. **[MAJOR]** — Music truncation (AC1, Q2, DETERMINISTIC_BUG) — \`src/audio/director.js:19\`
+   The fanfare is cut off when the state changes to clear.
+   Proof: running the real sim and director, the clear track stayed selected for only 4.30 s while the fanfare lasts 8.64 s.`;
+  const result = validateReview({
+    spec,
+    review: review({ productCheck: passingCheck, findings, verdict: 'REQUEST_CHANGES' }),
+  });
+
+  assert.equal(result.counts.demoted, 0);
+  assert.equal(result.counts.verified_blocking, 1);
+  assert.equal(result.effective_verdict, 'REQUEST_CHANGES');
+});
+
+test('a product finding is proved by a stated proof in the reviewer\'s own words', () => {
+  const findings = `1. **[MAJOR]** — Stuck state (PRODUCT_DEFECT) — running build
+   The player cannot leave the two-tile well.
+   Proof: dropped in at column 138 and held jump for ten seconds in three runs; never cleared the wall.`;
+  const result = validateReview({
+    spec,
+    review: review({ productCheck: passingCheck, findings, verdict: 'REQUEST_CHANGES' }),
+  });
+
+  assert.equal(result.counts.verified_blocking, 1);
+});
+
 test('Q-looking prose does not demote a contract finding when the spec has no experience criteria', () => {
   const findings = `1. **[MAJOR]** — Regression (AC1) — \`src/game.js:12\`
    Broken since the Q3 refactor.
