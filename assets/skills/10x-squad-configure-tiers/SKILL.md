@@ -40,10 +40,10 @@ It never runs automatically during a healthy pipeline.
    | Lane | trivial | lite | standard_clear | standard_ambiguous | complex |
    |---|---|---|---|---|---|
    | Thinker | `auto` | `low` | `medium` | `high` | highest the model supports |
-   | Builder | `auto` | `auto` | `low` | `medium` | `medium` |
+   | Builder | `auto` | `medium` | `high` | `high` | `high` |
    | Reviewer | `low` | `medium` | `high` | `high` | `high` |
 
-   The rationale to state when offering it: thinkers plan and see blast radius, reviewers gate the work, and a builder working from a good spec and a good review does not need frontier reasoning even on a complex task.
+   The rationale to state when offering it: thinkers plan and see blast radius, reviewers gate the work, and the builder makes most of the decisions that set the quality of the result — everything the spec did not name is decided at the keyboard. Effort is the cheapest quality setting there is, so the builder lane never drops below `medium` once judgement is involved. If the budget allows one strong model, recommend it for the Builder lane first. When a user asks to save cost, suggest a cheaper builder model at `high` effort before a lower effort on any model.
 
 Read-only review stops after reporting validation. Changes follow every gate below in order.
 

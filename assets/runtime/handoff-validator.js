@@ -209,6 +209,55 @@ function parseChangelist(build) {
   };
 }
 
+// Experience criteria (`Q#`) are the qualities no assertion can decide — look,
+// feel, polish. They are graded by someone using the running product, so the
+// spec only has to name them; the build and the review must then account for
+// every one of them.
+function parseExperienceCriteria(spec) {
+  const ids = [];
+  for (const line of extractSection(spec, 'Experience Criteria').split(/\r?\n/)) {
+    const match = /^\s*\d+[.)]\s+\((Q\d+)\)\s+\S/.exec(line);
+    if (match) {
+      ids.push(match[1]);
+    }
+  }
+  return ids;
+}
+
+// `## Observed` is the builder's account of running the thing it built. A
+// passing gate proves the trace chain is intact, never that the product works;
+// this section is where the build says what was actually seen, and — just as
+// important — what was not.
+function parseObserved(build) {
+  const section = extractSection(build, 'Observed');
+  const declared = /^##\s+Observed\s*$/m.test(build);
+  const observed = [];
+  const notObserved = [];
+  const malformedLines = [];
+
+  section.split(/\r?\n/).forEach((line, index) => {
+    if (line.trim().length === 0 || !/^\s*-\s+/.test(line)) {
+      return;
+    }
+    const match = /^\s*-\s+\(([^)]+)\)\s+(OBSERVED|NOT_OBSERVED)\s+(?:—|--|-)\s+\S/.exec(line);
+    const ids = match ? parseIdList(match[1], ['AC', 'Q']) : null;
+    if (!ids) {
+      malformedLines.push(index + 1);
+      return;
+    }
+    (match[2] === 'OBSERVED' ? observed : notObserved).push(...ids);
+  });
+
+  // A criterion claimed both ways is not observed: the conservative reading wins.
+  const notObservedSet = new Set(notObserved);
+  return {
+    declared,
+    observed: uniqueSorted(observed.filter((id) => !notObservedSet.has(id))),
+    notObserved: uniqueSorted(notObserved),
+    malformedLines,
+  };
+}
+
 function difference(left, right) {
   const rightSet = new Set(right);
   return left.filter((value) => !rightSet.has(value));
@@ -314,6 +363,31 @@ function validateHandoff({ brief, spec, build }) {
     }
   }
 
+  const experienceIds = parseExperienceCriteria(spec);
+  const experienceCriteria = uniqueSorted(experienceIds);
+  addError(errors, 'DUPLICATE_EXPERIENCE_CRITERIA', duplicateIds(experienceIds));
+
+  const observedSection = build === undefined ? null : parseObserved(build);
+  let observation = null;
+  if (observedSection !== null && (observedSection.declared || experienceCriteria.length > 0)) {
+    const reportable = [...acceptanceCriteria, ...experienceCriteria];
+    const reported = [...observedSection.observed, ...observedSection.notObserved];
+    if (observedSection.malformedLines.length > 0) {
+      errors.push({ code: 'MALFORMED_OBSERVED_ENTRIES', lines: observedSection.malformedLines });
+    }
+    addError(errors, 'UNKNOWN_OBSERVED_IDS', difference(reported, reportable));
+    // Opt-in strictness: a spec that names experience criteria obliges the
+    // build to say, for each one, whether it was seen. Acceptance criteria stay
+    // advisory here so builds that predate `## Observed` still pass.
+    addError(errors, 'UNREPORTED_EXPERIENCE_CRITERIA', difference(experienceCriteria, reported));
+    observation = {
+      declared: observedSection.declared,
+      observed: observedSection.observed.filter((id) => reportable.includes(id)),
+      not_observed: observedSection.notObserved.filter((id) => reportable.includes(id)),
+      unreported: difference(reportable, reported),
+    };
+  }
+
   const result = {
     ok: errors.length === 0,
     decisions,
@@ -328,6 +402,12 @@ function validateHandoff({ brief, spec, build }) {
   if (hasConstraintsSection || (changelist !== null && changelist.allConstraints.length > 0)) {
     result.constraints = constraints;
   }
+  if (experienceCriteria.length > 0) {
+    result.experience_criteria = experienceCriteria;
+  }
+  if (observation !== null) {
+    result.observation = observation;
+  }
   return result;
 }
 
@@ -335,5 +415,6 @@ module.exports = {
   digestText,
   extractIds,
   extractSection,
+  parseExperienceCriteria,
   validateHandoff,
 };

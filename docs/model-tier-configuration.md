@@ -2,7 +2,7 @@
 
 The squad routes every persona dispatch through a user-configured **(persona, work tier)** matrix: six dispatchable personas (`einstein`, `peter`, `linus`, `cobalt`, `sentinel`, `ralph`) × five work tiers (`trivial`, `lite`, `standard_clear`, `standard_ambiguous`, `complex`) — 30 profiles per harness. Each profile combines an **exact, surface-native model identifier**, a reasoning choice, and a context choice.
 
-Tier alone conflates how hard the task is with how much reasoning the role needs. On a Complex task the personas that plan and gate the work earn a frontier model at high effort; the persona executing an already-reviewed spec does not. Vivaldi resolves each persona's own profile per dispatch. Model choice is the user's due diligence; the repo's tests validate squad conformance only — private work tasks are never a model leaderboard.
+Tier alone conflates how hard the task is with how much reasoning the role needs. The roles differ in what they need, and the builder is not the cheap seat: it makes most of the decisions that set the quality of the result, including everything the spec did not name. A cheaper model earns its place where a machine can check the output (see `product-grounded-orchestration.md`). Vivaldi resolves each persona's own profile per dispatch. Model choice is the user's due diligence; the repo's tests validate squad conformance only — private work tasks are never a model leaderboard.
 
 ## Configure
 
