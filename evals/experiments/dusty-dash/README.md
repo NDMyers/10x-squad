@@ -14,6 +14,20 @@ One squad run and one solo run of a small game is a strong hint, not proof: the 
 | F | `run-F-false-positive-audit.md` | Opus 5.5, high | No build: audits the two existing builds | How much does a green test suite tell you about each build? |
 | G | `run-G-blind-scoring.md` | Any | No build: blinds the results | Lets you score without knowing which run is which |
 
+### Round two: the open brief
+
+Runs A to E all carry the same brief, and that brief turned out to be the problem: it is an eleven-item feature list that calls the game "small", where the original solo build had been given an open-ended request. Every round-one build met the list and stopped. Round two repeats the arrangements worth repeating with the open request and no list. Results for both rounds are in `docs/product-grounded-orchestration.md`.
+
+| Run | Prompt | Session model | Arrangement |
+|---|---|---|---|
+| O1, O2 | `run-O1-fable-solo-open-brief.md` (O2 is the same prompt with `run-O2/` and port 5222) | Fable 5.2, high | Solo build, open brief |
+| E2 | `run-E2-updated-squad-open-brief.md` | Fable 5.2, high (orchestrator) | Squad from this branch, Sonnet builder, tester once |
+| E3 | `run-E3-upgraded-squad.md` | Fable 5.2, high (orchestrator) | As E2 with a Fable builder (workspace routing file in the run folder), a one-page spec, and the request passed to the builder word for word |
+
+A squad run's opening message must begin with the typed `/10x-squad` command; the orchestrator skill cannot be loaded by a model on its own.
+
+### Running round one
+
 A, B, C, D1, D2 and F are independent and can run at the same time in separate sessions opened on the workspace root. E runs in its own folder, `experiments/dusty-dash/run-E/`, where this branch's squad is already installed; its file says how to start it. Run G after the build runs finish.
 
 Run F needs no new build and is the most direct test of the false-positive claim, so start it first. It is slow rather than expensive: build 1's suite takes about five minutes per run and the audit runs it sixteen times.

@@ -315,6 +315,11 @@ test('every harness entrypoint carries the product-grounding rules', () => {
     assert.match(vivaldi, /Not verified by observation/, harness);
     assert.match(vivaldi, /One writer per deliverable/, harness);
     assert.match(vivaldi, /cost\.md/, harness);
+    // From the open-brief runs: a builder handed a checklist stops at the checklist.
+    assert.match(vivaldi, /the request is the bar and the spec is only the floor/, harness);
+    assert.match(vivaldi, /the user's request in their own words/, harness);
+    assert.match(vivaldi, /Solo shape, Ralph runs once, after the review's effective verdict is APPROVE/, harness);
+    assert.match(vivaldi, /does not cover any `Q#` in `product_check\.not_graded`/, harness);
   }
 });
 
@@ -326,6 +331,7 @@ test('persona skills carry their half of the product-grounding contract', () => 
   assert.match(linus, /^## Observed$/m);
   assert.match(linus, /NOT_OBSERVED/);
   assert.doesNotMatch(linus, /No spec deviation/);
+  assert.match(linus, /The spec is the floor; the request is the bar/);
 
   const cobalt = skill('10x-cobalt-review');
   assert.match(cobalt, /^## Product Check$/m);
@@ -335,6 +341,8 @@ test('persona skills carry their half of the product-grounding contract', () => 
   const peter = skill('10x-peter-spec');
   assert.match(peter, /^## Experience Criteria/m);
   assert.match(peter, /Brief form/);
+  assert.match(peter, /The request is the bar; the spec is the floor/);
+  assert.match(peter, /do not translate it into a feature checklist/);
 
   const ralph = skill('10x-ralph-test');
   assert.match(ralph, /fail for the right reason/i);

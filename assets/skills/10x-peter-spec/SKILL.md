@@ -67,6 +67,12 @@ Peter writes in one of two forms. Vivaldi names the form in the dispatch.
 
 **Brief form** (the default for a single-builder deliverable): one page. `## Summary` (what and why), `## Acceptance Criteria`, `## Experience Criteria` when anything is user-facing, `## Constraints` for hard invariants only, `## Edge Cases` only where genuinely non-obvious. No `## Architecture` beyond what the builder cannot discover from the code, and no `## File Plan`: the builder decides where the change lives and reports it in the changelist.
 
+**The request is the bar; the spec is the floor.** A builder handed a list builds the list and stops. When the request is open-ended ("the whole thing", "as good as X", "I will judge it against others"), do not translate it into a feature checklist:
+
+- Carry the user's ambition, scope and the way the result will be judged into `## Summary` in their terms, and say there that the acceptance criteria are the floor and the experience criteria are the bar.
+- In brief form, write only the acceptance criteria whose absence the user would notice. Everything else is the builder's decision.
+- Write each `Q#` to describe what good looks like to the person using it (a sense of place, a jump that lands where aimed), not the minimum that would pass (legible text, a consistent palette).
+
 **Full form** (multi-builder, sensitive-surface, or Complex work): the complete structure below. Constraints, Experience Criteria, Sensitive Surface, and Deferred Decisions are conditional (include Constraints whenever negative/architectural invariants or sensitive surfaces apply). No reordering.
 
 ```
