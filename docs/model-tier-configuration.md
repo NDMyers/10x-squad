@@ -53,6 +53,8 @@ Each harness has its own profile and identifier namespace — never reuse identi
 | ChatGPT desktop app | `codex-app` | **Supported at the unverified tier** — spawn, per-dispatch model + reasoning, fail-loud, and unattended resolver all proven on this surface (Probe F); executed-model identity is not observable here either | spawnable model slugs, acquired on this surface |
 | Claude Code CLI | `claude-cli` | **Supported at the unverified tier in-session** — see `claude-code-harness-spike.md`; executed child models are verified by the eval harness from `claude -p` stream-json | dispatch-tool model aliases (e.g. `opus`) |
 | Claude desktop app (Code tab) | `claude-desktop` | **Supported at the unverified tier** — per-dispatch model + effort, fail-loud, and surface detection proven on this surface | dispatch-tool model aliases, acquired on this surface |
+| Antigravity CLI (`agy`) | `antigravity-cli` | **Supported at the unverified tier** — surface detection, live catalog (`agy models` / `swarm`), custom subagents, and `auto`/`auto` routing settings (effort encoded in model slug) | exact catalog slugs (acquired on this surface) |
+| Antigravity Desktop App | `antigravity-desktop` | **Supported at the unverified tier** — surface detection, live catalog (`swarm`), custom subagents, and `auto`/`auto` routing settings (effort encoded in model slug) | exact catalog slugs (acquired on this surface) |
 
 The two Codex surfaces are deliberately kept separate. They run different engine builds
 (`0.145.0` vs `0.146.0-alpha.3.1` on the reference machine), and their spawnable model sets drift
@@ -75,6 +77,8 @@ vocabularies:
 | `codex-app` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
 | `claude-cli` | `auto\|low\|medium\|high\|xhigh\|max` | `auto` only |
 | `claude-desktop` | `auto\|low\|medium\|high\|xhigh\|max` | `auto` only |
+| `antigravity-cli` | `auto` only | `auto` only |
+| `antigravity-desktop` | `auto` only | `auto` only |
 | `copilot-vscode`, unknown | `auto` only | `auto` only |
 
 Example values in docs are illustrative shapes, never defaults or a selectable list. Catalog/doc presence ≠ availability: entitlement, authentication, and the active session filter the real list. On the CLI, the authoritative list comes from the harness itself (e.g., a failed dispatch error enumerates entitled models; `/subagents` shows per-agent choices). On VS Code, a live invalid `runSubagent` call rejected the identifier before child launch and returned that active session's selectable labels. A later exact picker-label no-op returned `MODEL_ROUTE_OK`, proving that label was addressable in the tested session.
@@ -109,6 +113,13 @@ For VS Code, a successful exact-model no-op proves that the label is addressable
 - **Model values are aliases.** The dispatch tool accepts only the values its rejection message enumerates (family aliases such as `opus`, `sonnet`); configure-tiers stores those exact strings. Each alias floats to the newest model in its family for the signed-in account.
 - **Executed-model identity is not observable in-session.** The dispatch result carries no model field, so profiles record `unverified` / `addressability_probe`; the fail-loud pre-launch rejection is the backstop. `claude -p --output-format stream-json` does carry each child turn's `message.model`, and the eval harness uses it.
 - **Windows:** Claude Code's Bash tool is Git Bash, so the POSIX commands in the contract run unchanged. Install Git for Windows if Claude Code reports no shell.
+
+## Operational preconditions (Antigravity CLI / desktop app)
+
+- **Vivaldi runs in the main conversation.** It is the `/10x-squad` skill under `.agents/skills/10x-squad/SKILL.md` (mirrored to `~/.gemini/config/skills/` on home installs).
+- **Surface detection reads Antigravity's environment variables.** `node .10x-squad/runtime/control.js detect-surface --family antigravity` reads `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_APP_DATA_DIR` (`antigravity-cli` vs `antigravity` / `antigravity-ide`), `ANTIGRAVITY_AGENTAPI_EXE`, and `__CFBundleIdentifier` (`com.google.antigravity`) and fails loudly on missing or unrecognized values rather than guessing.
+- **Personas are real custom subagents.** `.agents/agents/10x-*.md` (mirrored to `~/.gemini/config/agents/` on home installs) define `subagent: true`, `mainAgent: false`, and scoped `tools` with no `model:` pin.
+- **Model slugs carry effort suffixes.** Catalog slugs returned by `agy models` or `swarm` `models` already encode reasoning effort levels, and child dispatch has no separate effort or context parameter, so `reasoning_effort` and `context_tier` are `auto` only.
 
 ## Free-text and local/BYOK
 

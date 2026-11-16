@@ -119,6 +119,25 @@ Linux.
 
 See `docs/claude-code-harness-spike.md` for the evidence behind each step.
 
+## antigravity-cli adapter
+
+1. Detect the active surface with `node .10x-squad/runtime/control.js detect-surface` (or `detect-surface --family antigravity`, with the `$HOME/.10x-squad/runtime/control.js` fallback); it reads `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_APP_DATA_DIR` (basename `antigravity-cli`), and `ANTIGRAVITY_AGENTAPI_EXE` (`agy`) and fails loudly on an unrecognized signal.
+2. Acquire the live catalog via `agy models` (parsing exact model slugs from the first tab-separated column after the `Model ID` header) or via `swarm` (`{"action": "models", "all": true}`, which returns `{"models": [...], "display_names": {...}, "quotas": {...}}` — populate `catalog.models` from its `models` array). Filter forbidden entries (`auto`, `inherit`, `default`, `Auto (copilot)`) while preserving every remaining exact slug byte-for-byte.
+3. Never supplement the list from documentation, another surface, or memory. If neither source returns a non-empty list, STOP and show the raw harness error. There is no hardcoded fallback.
+4. **Parent catalog (advisory only):** use the same returned live list as `parent_catalog` when resolving Vivaldi's optional `advisory` row.
+5. **Runtime settings:** Antigravity model slugs encode reasoning effort directly in the model identifier (for example `-low`, `-medium`, `-high`, `-xhigh`), and child dispatch exposes no separate effort or context parameter, so `reasoning_effort` and `context_tier` are `auto` only.
+6. **Probes:** for each verification target, dispatch a harmless probe for exact catalog slugs using `swarm`: call `{"action": "add", "name": "<probe-name>", "model": dispatch_arguments.model, "brief": "Reply with exactly MODEL_ROUTE_OK. Do not read files, write files, or invoke tools."}`, wait for its completion reply, and then call `{"action": "kill", "name": "<probe-name>"}` (`invoke_subagent`'s `Model` parameter only accepts the 4-value enum `["inherit", "flash_lite", "flash", "pro"]`, so `swarm` is required for exact catalog slugs). In-session tool responses do not return the executed model identifier, so record `identity_observable: false`; such entries remain `unverified` / `addressability_probe`.
+
+## antigravity-desktop adapter
+
+Antigravity Desktop (`antigravity-desktop`, where `ANTIGRAVITY_APP_DATA_DIR` has basename `antigravity` or `antigravity-ide`) is a **separate surface** with its own stored profile. Never copy an `antigravity-cli` profile across without re-acquiring the live catalog on this surface.
+
+1. Acquire the live selectable model catalog in-session via `swarm` with `{"action": "models", "all": true}`, which returns `{"models": [...], "display_names": {...}, "quotas": {...}}` — populate `catalog.models` from its `models` array (or `agy models` only if `swarm` is unavailable and the user confirms a shared account catalog).
+2. Filter forbidden entries while preserving every remaining exact model identifier byte-for-byte. If no reliable list is returned, STOP and show the raw harness error.
+3. **Runtime settings and probes:** `reasoning_effort` and `context_tier` are `auto` only (model slugs encode effort variants directly). Probe each unique target tuple via `swarm` (`{"action": "add", "name": "<probe-name>", "model": dispatch_arguments.model, "brief": "Reply with exactly MODEL_ROUTE_OK. Do not read files, write files, or invoke tools."}`, waiting for its completion reply and then calling `{"action": "kill", "name": "<probe-name>"}`), since `invoke_subagent`'s `Model` parameter only accepts `["inherit", "flash_lite", "flash", "pro"]`. Record `identity_observable: false` (`unverified` / `addressability_probe`), and confirm every target succeeds before calling `build-profile`.
+
+See `docs/antigravity-harness-spike.md` for the evidence behind both Antigravity surfaces.
+
 ## Matching states and interaction
 
 The only states are `exact`, `likely`, `ambiguous`, `no_match`, and `banned`; never infer a sixth state.
@@ -140,6 +159,10 @@ Each resolved model selection also needs explicit-or-`auto` choices for `reasoni
 | `copilot-cli` | `auto\|low\|medium\|high\|xhigh` | `auto\|default\|long_context` |
 | `codex-cli` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
 | `codex-app` | `auto\|low\|medium\|high\|xhigh\|max\|ultra` | `auto` only |
+| `claude-cli` | `auto\|low\|medium\|high\|xhigh\|max` | `auto` only |
+| `claude-desktop` | `auto\|low\|medium\|high\|xhigh\|max` | `auto` only |
+| `antigravity-cli` | `auto` only | `auto` only |
+| `antigravity-desktop` | `auto` only | `auto` only |
 | `copilot-vscode`, unknown | `auto` only | `auto` only |
 
 `auto` means independently omit that corresponding dispatch parameter and allow the active harness's adaptive or default behavior. It is not Copilot model Auto and is not parent inheritance. `long_context` is a Copilot named tier; never promise a numeric context size. `context_tier` has no Codex analog — Codex `spawn_agent` takes only `model` and `reasoning_effort`, so `codex-cli` accepts `auto` alone.

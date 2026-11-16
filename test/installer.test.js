@@ -35,8 +35,14 @@ function walkFiles(dir) {
   return out;
 }
 
-const { PERSONA_AGENTS, composeClaudePersonaAgent, composeVivaldi, composePersonaAgents } = require('../lib/compose');
-const { detectShadowedSkills, installTenXSquad } = require('../lib/installer');
+const {
+  PERSONA_AGENTS,
+  composeClaudePersonaAgent,
+  composeAntigravityPersonaAgent,
+  composeVivaldi,
+  composePersonaAgents,
+} = require('../lib/compose');
+const { antigravityHomeMirrorAssets, detectShadowedSkills, installTenXSquad } = require('../lib/installer');
 
 // Same CLI-style args as runCli, but returns the structured install result so
 // the shadow report can be asserted directly rather than scraped from stderr.
@@ -89,9 +95,26 @@ const harnessAssets = {
     })),
     ...skillAssets(path.posix.join('.claude', 'skills')),
   ],
+  antigravity: [
+    { contents: () => composeVivaldi('antigravity'), target: path.posix.join('.agents', 'skills', '10x-squad', 'SKILL.md') },
+    ...Object.keys(PERSONA_AGENTS).map((persona) => ({
+      contents: () => composeAntigravityPersonaAgent(persona),
+      target: path.posix.join('.agents', 'agents', `${PERSONA_AGENTS[persona].name}.md`),
+    })),
+    ...skillAssets(path.posix.join('.agents', 'skills')),
+  ],
 };
 
-const assets = [...harnessAssets.copilot, ...harnessAssets.codex, ...harnessAssets.claude];
+const assets = Array.from(
+  [...harnessAssets.copilot, ...harnessAssets.codex, ...harnessAssets.claude, ...harnessAssets.antigravity]
+    .reduce((byTarget, asset) => {
+      if (!byTarget.has(asset.target)) {
+        byTarget.set(asset.target, asset);
+      }
+      return byTarget;
+    }, new Map())
+    .values()
+);
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), '10x-squad-installer-'));
@@ -473,10 +496,37 @@ test('uninstall --harness removes only that harness tree', () => {
   const workspace = makeTempDir();
   runCli(['install'], workspace);
 
-  runCli(['uninstall', '--harness', 'codex'], workspace);
+  runCli(['uninstall', '--harness', 'claude'], workspace);
 
-  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+  assert.equal(fs.existsSync(path.join(workspace, '.claude')), false);
   assertInstalledAssets(workspace, harnessAssets.copilot);
+  assertInstalledAssets(workspace, harnessAssets.codex);
+  assertInstalledAssets(workspace, harnessAssets.antigravity);
+});
+
+test('install --harness antigravity writes .agents/skills/10x-squad, .agents/agents/10x-*.md, and coexists with codex', () => {
+  const workspace = makeTempDir();
+  runCli(['install', '--harness', 'codex'], workspace);
+  runCli(['install', '--harness', 'antigravity'], workspace);
+
+  assertInstalledAssets(workspace, harnessAssets.codex);
+  assertInstalledAssets(workspace, harnessAssets.antigravity);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents', 'skills', '10x-squad', 'SKILL.md')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents', 'agents', '10x-einstein.md')), true);
+
+  runCli(['uninstall', '--harness', 'codex'], workspace);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents', 'skills', '10x-squad-vivaldi')), false);
+  assertInstalledAssets(workspace, harnessAssets.antigravity);
+
+  runCli(['uninstall', '--harness', 'antigravity'], workspace);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
+});
+
+test('antigravityHomeMirrorAssets mirrors Antigravity entrypoint, personas, and skills under .gemini/config', () => {
+  const mirrorTargets = new Set(antigravityHomeMirrorAssets().map((asset) => asset.target));
+  assert.ok(mirrorTargets.has('.gemini/config/skills/10x-squad/SKILL.md'));
+  assert.ok(mirrorTargets.has('.gemini/config/agents/10x-einstein.md'));
+  assert.ok(mirrorTargets.has('.gemini/config/skills/10x-linus-build/SKILL.md'));
 });
 
 test('targeted uninstall removes the shared runtime when no installed harness remains', () => {
@@ -593,6 +643,8 @@ test('install defaults to every harness', () => {
   assertInstalledAssets(workspace);
   assert.equal(fs.existsSync(path.join(workspace, '.github', 'agents', '10x-squad.agent.md')), true);
   assert.equal(fs.existsSync(path.join(workspace, '.agents', 'skills', '10x-squad-vivaldi', 'SKILL.md')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents', 'skills', '10x-squad', 'SKILL.md')), true);
+  assert.equal(fs.existsSync(path.join(workspace, '.agents', 'agents', '10x-einstein.md')), true);
   assert.equal(fs.existsSync(path.join(workspace, '.claude', 'skills', '10x-squad', 'SKILL.md')), true);
 });
 

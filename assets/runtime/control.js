@@ -10,7 +10,7 @@ const { validateReview } = require('./review-validator');
 const { openDashboard, renderBoard, serveBoard, syncProjectDashboard, toggleUi } = require('./workflow-board');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
 const { advancePhase } = require('./phase-runner');
-const { detectClaudeSurface } = require('./surface');
+const { detectSurface } = require('./surface');
 
 function parseHandoffOptions(args) {
   const options = {};
@@ -139,8 +139,8 @@ function main(argv) {
     }
 
     if (command === 'detect-surface') {
-      parseNamedPaths(args, []);
-      const result = detectClaudeSurface(process.env);
+      const options = parseNamedPaths(args, [], ['family']);
+      const result = detectSurface(process.env, { family: options.family });
       console.log(JSON.stringify(result));
       return result.ok ? 0 : 1;
     }

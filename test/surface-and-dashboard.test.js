@@ -10,7 +10,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const { detectClaudeSurface, CLAUDE_ENTRYPOINT_SURFACES } = require('../assets/runtime/surface');
+const {
+  detectClaudeSurface,
+  detectAntigravitySurface,
+  detectSurface,
+  CLAUDE_ENTRYPOINT_SURFACES,
+  ANTIGRAVITY_DATA_DIR_SURFACES,
+} = require('../assets/runtime/surface');
 const { browserOpener, dashboardUrl, openDashboard } = require('../assets/runtime/workflow-board');
 
 const controlPath = path.resolve(__dirname, '..', 'assets', 'runtime', 'control.js');
@@ -42,10 +48,108 @@ test('detect-surface prints one JSON line and exits nonzero on failure', () => {
 
   const bad = spawnSync(process.execPath, [controlPath, 'detect-surface'], {
     encoding: 'utf8',
-    env: { ...process.env, CLAUDECODE: '', CLAUDE_CODE_ENTRYPOINT: '' },
+    env: {
+      ...process.env,
+      CLAUDECODE: '',
+      CLAUDE_CODE_ENTRYPOINT: '',
+      ANTIGRAVITY_AGENT: '',
+      ANTIGRAVITY_CLI_ALIAS: '',
+      ANTIGRAVITY_APP_DATA_DIR: '',
+      ANTIGRAVITY_AGENTAPI_EXE: '',
+      __CFBundleIdentifier: '',
+    },
   });
   assert.equal(bad.status, 1);
   assert.equal(JSON.parse(bad.stdout).ok, false);
+
+  const agyAuto = spawnSync(process.execPath, [controlPath, 'detect-surface'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CLAUDECODE: '',
+      CLAUDE_CODE_ENTRYPOINT: '',
+      ANTIGRAVITY_CLI_ALIAS: 'agy',
+      ANTIGRAVITY_AGENT: '1',
+      ANTIGRAVITY_APP_DATA_DIR: '',
+      ANTIGRAVITY_AGENTAPI_EXE: '',
+      __CFBundleIdentifier: '',
+    },
+  });
+  assert.equal(agyAuto.status, 0, agyAuto.stderr);
+  assert.equal(JSON.parse(agyAuto.stdout).harness, 'antigravity-cli');
+
+  const agyOk = spawnSync(process.execPath, [controlPath, 'detect-surface', '--family', 'antigravity'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ANTIGRAVITY_CLI_ALIAS: 'agy',
+      ANTIGRAVITY_AGENT: '1',
+      ANTIGRAVITY_APP_DATA_DIR: '',
+      ANTIGRAVITY_AGENTAPI_EXE: '',
+      __CFBundleIdentifier: '',
+    },
+  });
+  assert.equal(agyOk.status, 0, agyOk.stderr);
+  assert.equal(JSON.parse(agyOk.stdout).harness, 'antigravity-cli');
+
+  const agyBad = spawnSync(process.execPath, [controlPath, 'detect-surface', '--family', 'antigravity'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ANTIGRAVITY_AGENT: '',
+      ANTIGRAVITY_CLI_ALIAS: '',
+      ANTIGRAVITY_APP_DATA_DIR: '',
+      ANTIGRAVITY_AGENTAPI_EXE: '',
+      __CFBundleIdentifier: '',
+    },
+  });
+  assert.equal(agyBad.status, 1);
+  assert.equal(JSON.parse(agyBad.stdout).error, 'NOT_ANTIGRAVITY');
+});
+
+test('detectAntigravitySurface distinguishes antigravity-cli and antigravity-desktop and fails cleanly otherwise', () => {
+  assert.deepEqual(ANTIGRAVITY_DATA_DIR_SURFACES, {
+    'antigravity-cli': 'antigravity-cli',
+    antigravity: 'antigravity-desktop',
+    'antigravity-ide': 'antigravity-desktop',
+  });
+
+  assert.equal(
+    detectAntigravitySurface({ ANTIGRAVITY_APP_DATA_DIR: '/Users/dev/.antigravity-cli/antigravity-cli' }).harness,
+    'antigravity-cli'
+  );
+  assert.equal(
+    detectAntigravitySurface({ ANTIGRAVITY_APP_DATA_DIR: '/Users/dev/Library/Application Support/antigravity' }).harness,
+    'antigravity-desktop'
+  );
+  assert.equal(
+    detectAntigravitySurface({ ANTIGRAVITY_APP_DATA_DIR: '/Users/dev/.gemini/antigravity-ide' }).harness,
+    'antigravity-desktop'
+  );
+  assert.equal(
+    detectAntigravitySurface({ ANTIGRAVITY_AGENTAPI_EXE: '/opt/bin/agy' }).harness,
+    'antigravity-cli'
+  );
+  assert.equal(
+    detectAntigravitySurface({ ANTIGRAVITY_AGENTAPI_EXE: '/Applications/Antigravity.app/Contents/Resources/language_server' }).harness,
+    'antigravity-desktop'
+  );
+  assert.equal(
+    detectAntigravitySurface({ __CFBundleIdentifier: 'com.google.antigravity' }).harness,
+    'antigravity-desktop'
+  );
+
+  assert.equal(detectAntigravitySurface({}).error, 'NOT_ANTIGRAVITY');
+  assert.equal(detectAntigravitySurface({ ANTIGRAVITY_AGENT: '1' }).error, 'NO_SURFACE_SIGNAL');
+  assert.equal(detectAntigravitySurface({ ANTIGRAVITY_APP_DATA_DIR: '/tmp/custom-surface' }).error, 'UNKNOWN_SURFACE');
+  assert.equal(
+    detectSurface({ CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', ANTIGRAVITY_AGENT: '1' }).harness,
+    'claude-cli'
+  );
+  assert.equal(
+    detectSurface({ ANTIGRAVITY_CLI_ALIAS: 'agy' }, { family: 'antigravity' }).harness,
+    'antigravity-cli'
+  );
 });
 
 test('dashboard URLs are valid file: URLs on every OS', () => {

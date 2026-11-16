@@ -43,12 +43,12 @@ Commands:
   toggle-ui               Enable, disable, toggle, or inspect automatic Workflow Monitor UI
   open-dashboard          Render a project's Workflow Monitor and open it in the default
                           browser (Windows, macOS, Linux); prints its file: URL
-  detect-surface          Report the Claude Code routing surface (claude-cli |
-                          claude-desktop) from the calling shell's environment
+  detect-surface          Report the Claude Code or Antigravity routing surface from
+                          the calling shell's environment
 
 Options:
   -d, --directory <path>  Target project directory
-  --harness <name>        copilot | codex | claude | all (default: all)
+  --harness <name>        copilot | codex | claude | antigravity | all (default: all)
   --brief <path>          Optional deliberation brief for validate-handoff
   --spec <path>           Technical spec for validate-handoff / validate-review
   --build <path>          Optional build changelist for validate-handoff

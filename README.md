@@ -6,8 +6,9 @@ skills, and a dependency-free deterministic control runtime. The skills include 
 model, reasoning, and context routing and `10x-squad-toggle-ui` for toggling the automatic live
 Workflow Monitor UI.
 
-Ships to **GitHub Copilot**, **Codex** (Codex CLI and the ChatGPT desktop app), and **Claude Code**
-(the `claude` CLI and the Claude desktop app's Code tab).
+Ships to **GitHub Copilot**, **Codex** (Codex CLI and the ChatGPT desktop app), **Claude Code**
+(the `claude` CLI and the Claude desktop app's Code tab), and **Google Antigravity** (the `agy` CLI
+and the Antigravity desktop application).
 
 Requires Node.js ≥ 20. No runtime dependencies. Works on Windows, macOS, and Linux.
 
@@ -41,7 +42,7 @@ Commands:
   detect-surface
 
   -d, --directory <path>   Target project directory (default: cwd)
-  --harness <name>         copilot | codex | claude | all (default: all)
+  --harness <name>         copilot | codex | claude | antigravity | all (default: all)
   -h, --help               Show help
   -v, --version            Show version
 ```
@@ -60,20 +61,24 @@ the routing surface key described under [Model routing](#model-routing); don't c
 | `copilot` | `10x-squad` custom agent | `.github/agents/10x-*.agent.md`<br>`.github/skills/10x-*/` |
 | `codex` | `$10x-squad-vivaldi` skill | `.agents/skills/10x-squad-vivaldi/SKILL.md`<br>`.agents/skills/10x-squad-vivaldi/agents/openai.yaml`<br>`.agents/skills/10x-*/` |
 | `claude` | `/10x-squad` skill | `.claude/skills/10x-squad/SKILL.md`<br>`.claude/agents/10x-*.md`<br>`.claude/skills/10x-*/` |
-| `all` *(default)* | all three | all three trees |
+| `antigravity` | `/10x-squad` skill | `.agents/skills/10x-squad/SKILL.md`<br>`.agents/agents/10x-*.md`<br>`.agents/skills/10x-*/` |
+| `all` *(default)* | all four | all four trees (shared `.agents/skills/10x-*/` deduplicated) |
 
 Each skill installs as a complete package — `SKILL.md` plus its nested `scripts/`, `references/`,
 and `agents/` directories. Vivaldi is not copied but *composed* per harness from `assets/vivaldi/`,
 so every entrypoint stays derived from one body. Every install also writes the shared
-`.10x-squad/runtime/` control scripts. A harness-specific uninstall preserves this runtime; an
-all-harness uninstall removes it while preserving `.10x-squad/model-routing.json`.
+`.10x-squad/runtime/` control scripts. A harness-specific uninstall preserves this runtime (and any
+shared `.agents/skills/10x-*/` skills still used by another installed harness); an all-harness
+uninstall removes it while preserving `.10x-squad/model-routing.json`.
 
 When the target is the user's home directory, a Copilot install also mirrors its agents to
-`~/.copilot/agents/` and its complete skills to `~/.copilot/skills/`, where Copilot CLI discovers
-personal customizations. Uninstall removes those owned mirrors and leaves unrelated files intact.
-Workspace installs do not create the home-only mirrors. A Claude install into the home directory
-needs no mirror: `~/.claude/skills/` and `~/.claude/agents/` are Claude Code's own user-level roots,
-so `--directory ~ --harness claude` makes `/10x-squad` available in every project.
+`~/.copilot/agents/` and its complete skills to `~/.copilot/skills/`, and an Antigravity install
+mirrors its skill and agents to `~/.gemini/config/skills/` and `~/.gemini/config/agents/`, where
+their user-level CLIs and desktop apps discover personal customizations. Uninstall removes those owned
+mirrors and leaves unrelated files intact. Workspace installs do not create the home-only mirrors.
+A Claude install into the home directory needs no mirror: `~/.claude/skills/` and `~/.claude/agents/`
+are Claude Code's own user-level roots, so `--directory ~ --harness claude` makes `/10x-squad`
+available in every project.
 
 ### Verify the install
 
@@ -81,10 +86,11 @@ so `--directory ~ --harness claude` makes `/10x-squad` available in every projec
 ls <workspace-root>/.github/agents/10x-squad.agent.md          # copilot
 ls <workspace-root>/.agents/skills/10x-squad-vivaldi/SKILL.md  # codex
 ls <workspace-root>/.claude/skills/10x-squad/SKILL.md          # claude
+ls <workspace-root>/.agents/skills/10x-squad/SKILL.md          # antigravity
 ```
 
 Then open the workspace in the harness and invoke the orchestrator — `@10x-squad` on Copilot,
-`$10x-squad-vivaldi` on Codex, `/10x-squad` on Claude Code. It introduces itself before doing anything; if it doesn't, the skill
+`$10x-squad-vivaldi` on Codex, `/10x-squad` on Claude Code or Antigravity. It introduces itself before doing anything; if it doesn't, the skill
 didn't load.
 
 ---
@@ -147,6 +153,24 @@ desktop profile; unset `CLAUDE_CODE_ENTRYPOINT` first if you want the CLI profil
 
 Evidence, probe records, and known surface limits: [`docs/claude-code-harness-spike.md`](docs/claude-code-harness-spike.md).
 
+### Google Antigravity
+
+One Antigravity install serves **two surfaces**: the `agy` CLI (`antigravity-cli`) and the
+Antigravity desktop application (`antigravity-desktop`). Both keep separate routing profiles. Vivaldi
+runs `control.js detect-surface --family antigravity` (reading `ANTIGRAVITY_AGENT`,
+`ANTIGRAVITY_APP_DATA_DIR`, `ANTIGRAVITY_AGENTAPI_EXE`, and `__CFBundleIdentifier`) and stops rather
+than guessing if the surface cannot be determined.
+
+- **Vivaldi is the `/10x-squad` skill** under `.agents/skills/10x-squad/SKILL.md` (mirrored to
+  `~/.gemini/config/skills/` on home-directory installs).
+- **Personas are real custom subagents** (`.agents/agents/10x-*.md`, mirrored to
+  `~/.gemini/config/agents/` on home-directory installs) with `subagent: true`, `mainAgent: false`,
+  and least-privilege Antigravity `tools` lists. No `model:` pin is written in frontmatter.
+- **Models encode reasoning effort in their catalog slugs** (discovered live via `agy models` or
+  `swarm` `models` action), so per-dispatch `reasoning_effort` and `context_tier` remain `auto`.
+
+Evidence and surface notes: [`docs/antigravity-harness-spike.md`](docs/antigravity-harness-spike.md).
+
 ---
 
 ## Model routing
@@ -196,6 +220,8 @@ Profiles are keyed by **routing surface** — a finer-grained identifier than th
 | `codex-app` | `auto` `low` `medium` `high` `xhigh` `max` `ultra` | `auto` |
 | `claude-cli` | `auto` `low` `medium` `high` `xhigh` `max` | `auto` |
 | `claude-desktop` | `auto` `low` `medium` `high` `xhigh` `max` | `auto` |
+| `antigravity-cli` | `auto` | `auto` |
+| `antigravity-desktop` | `auto` | `auto` |
 | anything else (incl. `copilot-vscode`) | `auto` | `auto` |
 
 Configure each surface you actually use. A missing profile is a hard stop, not a fallback.
@@ -288,7 +314,7 @@ command stubs, superseded by the `claude` install target). `--source-only` skips
 failures alone, making it suitable for CI. Without that flag the complete historical audit remains
 available.
 
-Real eval runs require `EVAL_HARNESS=copilot-cli|codex-cli|claude-cli`, an exact target-surface `EVAL_MODEL`,
+Real eval runs require `EVAL_HARNESS=copilot-cli|codex-cli|claude-cli|antigravity-cli`, an exact target-surface `EVAL_MODEL`,
 and `EVAL_ROUTING_CONFIG` pointing to a `model-routing.json` containing that surface's persona
 profiles. Each run installs the selected harness and routing config into its isolated fixture,
 preserves uniquely addressed raw JSONL events under `evals/runs/`, and appends only observable

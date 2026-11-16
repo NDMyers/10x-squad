@@ -16,6 +16,11 @@ function resolverCandidates({ workspaceRoot, harness }) {
   // resolves through another harness's (possibly older) copy of the engine.
   function rootsFor(isHome) {
     if (family === 'codex') return ['.agents', '.github', '.claude'];
+    if (family === 'antigravity') {
+      return isHome
+        ? ['.gemini/config', '.agents', '.github', '.claude']
+        : ['.agents', '.github', '.claude'];
+    }
     if (family === 'claude') return ['.claude', '.github', '.agents'];
     return isHome ? ['.copilot', '.github', '.agents', '.claude'] : ['.github', '.agents', '.claude'];
   }

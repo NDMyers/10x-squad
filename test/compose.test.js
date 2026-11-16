@@ -14,6 +14,8 @@ const {
   composeVivaldi,
   composePersonaAgent,
   composePersonaAgents,
+  composeAntigravityPersonaAgent,
+  ANTIGRAVITY_TOOL_MAP,
   harnessEntrypoints,
   PERSONA_AGENTS,
 } = require('../lib/compose');
@@ -112,6 +114,7 @@ test('the Codex entrypoint is named as a skill and the Copilot one as an agent',
   assert.match(codex.frontmatter, /^name: 10x-squad-vivaldi$/m);
   assert.match(copilot.frontmatter, /^name: 10x-squad$/m);
   assert.match(frontmatterAndBody(composeVivaldi('claude')).frontmatter, /^name: 10x-squad$/m);
+  assert.match(frontmatterAndBody(composeVivaldi('antigravity')).frontmatter, /^name: 10x-squad$/m);
 });
 
 test('dispatch sections do not cross surfaces', () => {
@@ -128,14 +131,24 @@ test('dispatch sections do not cross surfaces', () => {
     assert.ok(!copilot.includes(codexOnly), `Copilot entrypoint must not reference ${codexOnly}`);
   }
 
-  // Claude Code's actuators and surfaces must not leak into either, nor theirs into Claude's.
+  // Claude Code's and Antigravity's actuators and surfaces must not leak into Copilot/Codex, nor theirs into Claude/Antigravity.
   const claude = composeVivaldi('claude');
+  const antigravity = composeVivaldi('antigravity');
   for (const claudeOnly of ['subagent_type', 'claude-desktop', 'claude-cli', 'detect-surface']) {
     assert.ok(!copilot.includes(claudeOnly), `Copilot entrypoint must not reference ${claudeOnly}`);
     assert.ok(!codex.includes(claudeOnly), `Codex entrypoint must not reference ${claudeOnly}`);
   }
+  for (const agyOnly of ['antigravity-cli', 'antigravity-desktop', 'invoke_subagent']) {
+    assert.ok(!copilot.includes(agyOnly), `Copilot entrypoint must not reference ${agyOnly}`);
+    assert.ok(!codex.includes(agyOnly), `Codex entrypoint must not reference ${agyOnly}`);
+    assert.ok(!claude.includes(agyOnly), `Claude entrypoint must not reference ${agyOnly}`);
+  }
   for (const foreign of ['runSubagent', 'spawn_agent', 'wait_agent', 'codex-app', 'copilot-cli']) {
     assert.ok(!claude.includes(foreign), `Claude entrypoint must not reference ${foreign}`);
+    assert.ok(!antigravity.includes(foreign), `Antigravity entrypoint must not reference ${foreign}`);
+  }
+  for (const claudeOnly of ['subagent_type', 'claude-desktop', 'claude-cli']) {
+    assert.ok(!antigravity.includes(claudeOnly), `Antigravity entrypoint must not reference ${claudeOnly}`);
   }
 });
 
@@ -222,4 +235,15 @@ test('composePersonaAgents produces six scoped Copilot subagents with minimal to
   const sentinelFm = frontmatterAndBody(composePersonaAgent('sentinel')).frontmatter;
   assert.doesNotMatch(sentinelFm, /- "edit"/);
   assert.doesNotMatch(sentinelFm, /- "execute"/);
+
+  for (const [persona, spec] of Object.entries(PERSONA_AGENTS)) {
+    const agyFm = frontmatterAndBody(composeAntigravityPersonaAgent(persona)).frontmatter;
+    assert.match(agyFm, /^subagent: true$/m);
+    assert.match(agyFm, /^mainAgent: false$/m);
+    for (const tool of spec.tools) {
+      for (const mapped of ANTIGRAVITY_TOOL_MAP[tool] || []) {
+        assert.match(agyFm, new RegExp(`^  - ${mapped}$`, 'm'));
+      }
+    }
+  }
 });
