@@ -6,7 +6,7 @@
 #
 # Env:
 #   REPS=3                  repetitions per task
-#   EVAL_HARNESS             copilot-cli | codex-cli (required for real runs)
+#   EVAL_HARNESS             copilot-cli | codex-cli | claude-cli | antigravity-cli (required for real runs)
 #   EVAL_MODEL               exact model identifier for the selected harness
 #   EVAL_ROUTING_CONFIG      model-routing.json with the selected harness profile
 #   EVAL_REASONING_EFFORT    optional explicit effort; default auto
@@ -36,8 +36,8 @@ VARIANT_ID="$(node -e 'const crypto=require("node:crypto"); process.stdout.write
 
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
   case "$HARNESS" in
-    copilot-cli|codex-cli|claude-cli) ;;
-    *) echo "EVAL_HARNESS must be copilot-cli, codex-cli, or claude-cli" >&2; exit 2 ;;
+    copilot-cli|codex-cli|claude-cli|antigravity-cli) ;;
+    *) echo "EVAL_HARNESS must be copilot-cli, codex-cli, claude-cli, or antigravity-cli" >&2; exit 2 ;;
   esac
   MODEL="${EVAL_MODEL:?EVAL_MODEL is required for real runs}"
   ROUTING_CONFIG="${EVAL_ROUTING_CONFIG:?EVAL_ROUTING_CONFIG is required for real runs}"

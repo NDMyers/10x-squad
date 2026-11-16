@@ -90,6 +90,12 @@ test('harness dispatch capabilities keep declaration order for error messages', 
     );
     assert.deepEqual(HARNESS_DISPATCH_CAPABILITIES[surface].context_tier, ['auto']);
   }
+  for (const surface of ['antigravity-cli', 'antigravity-desktop']) {
+    assert.deepEqual(HARNESS_DISPATCH_CAPABILITIES[surface], {
+      reasoning_effort: ['auto'],
+      context_tier: ['auto'],
+    });
+  }
   // copilot-vscode is deliberately absent: an unverified dispatch contract gets
   // the safe auto/auto posture.
   assert.ok(!Object.hasOwn(HARNESS_DISPATCH_CAPABILITIES, 'copilot-vscode'));

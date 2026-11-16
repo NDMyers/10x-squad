@@ -77,6 +77,17 @@ const HARNESS_DISPATCH_CAPABILITIES = {
     reasoning_effort: ['auto', 'low', 'medium', 'high', 'xhigh', 'max'],
     context_tier: ['auto'],
   },
+  // Antigravity: model slugs encode reasoning effort directly in the model ID
+  // (e.g. -low, -medium, -high, -xhigh) and child dispatch exposes no separate
+  // effort or context parameter (docs/antigravity-harness-spike.md).
+  'antigravity-cli': {
+    reasoning_effort: ['auto'],
+    context_tier: ['auto'],
+  },
+  'antigravity-desktop': {
+    reasoning_effort: ['auto'],
+    context_tier: ['auto'],
+  },
 };
 
 const DEFAULT_DISPATCH_CAPABILITY = {

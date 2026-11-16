@@ -385,7 +385,16 @@ test('the Claude adapter runs /10x-squad headless with stream-json and per-run e
   assert.match(claude, /--model "\$model"/);
   assert.match(claude, /--effort "\$EVAL_REASONING_EFFORT"/);
   assert.match(claude, /--no-session-persistence/);
-  assert.match(runner, /copilot-cli\|codex-cli\|claude-cli\)/);
+  assert.match(runner, /copilot-cli\|codex-cli\|claude-cli\|antigravity-cli\)/);
+});
+
+test('the Antigravity adapter runs agy /10x-squad in non-interactive mode', () => {
+  const antigravity = fs.readFileSync(path.join(evalRoot, 'adapters', 'antigravity-cli.sh'), 'utf8');
+  assert.match(antigravity, /agy "\$\{args\[@\]\}"/);
+  assert.match(antigravity, /-p "\$prompt"/);
+  assert.match(antigravity, /--model "\$model"/);
+  assert.match(antigravity, /--mode auto --accept-edits/);
+  assert.match(antigravity, /\/10x-squad /);
 });
 
 test('a relative task path still runs its check from inside the task workspace', () => {

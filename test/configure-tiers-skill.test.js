@@ -689,8 +689,10 @@ test('model resolution defines explicit catalog adapters for every active harnes
       reference.includes('## copilot-cli adapter'),
       reference.includes('## codex-cli adapter'),
       reference.includes('## codex-app adapter'),
+      reference.includes('## antigravity-cli adapter'),
+      reference.includes('## antigravity-desktop adapter'),
     ],
-    [true, true, true, true]
+    [true, true, true, true, true, true]
   );
 });
 
