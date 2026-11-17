@@ -226,10 +226,19 @@ function validateSingleReview({
       }
     }
 
+    // The reviewer is told that a regression observed in the running product is
+    // in scope wherever its cause lies. That holds whether the finding cites
+    // `PRODUCT_DEFECT` or the contract ID the regression breaks: naming the
+    // edge case and the file at fault must not cost a finding its exemption.
+    // The keyword only ever grants the exemption; a finding without it is
+    // judged as before.
+    const provedByObservation = finding.stated_proof !== null && /^observed\b/i.test(finding.stated_proof);
+
     if (
       allowedCycleFiles !== null
       && finding.file
       && !isProductFinding
+      && !provedByObservation
       && !finding.citations.coverage_gate
       && !allowedCycleFiles.has(finding.file)
     ) {
@@ -286,7 +295,13 @@ function validateReview({ spec, review, sentinelReview, previousReview }) {
     const prevFindings = parseFindingBlocks(previousReview, 'previous').filter(
       (f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR'
     );
-    allowedCycleFiles = new Set(prevFindings.map((f) => f.file).filter(Boolean));
+    // The lock exists so a re-review cannot move the goalposts set by the
+    // review that asked for changes. A previous review with no blocking finding
+    // set none: locking to it would put every file out of scope and demote
+    // whatever the re-review finds.
+    if (prevFindings.length > 0) {
+      allowedCycleFiles = new Set(prevFindings.map((f) => f.file).filter(Boolean));
+    }
   }
 
   const reviews = [

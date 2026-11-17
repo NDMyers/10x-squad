@@ -305,6 +305,72 @@ test('cycle 2 scope lock does not suppress an observed product regression', () =
   assert.equal(result.counts.demoted, 0);
 });
 
+// From run E4: the reviewer re-checked a fix, measured the product regressing
+// at three window sizes, and cited the edge case and the file at fault. Being
+// that specific cost the finding its exemption: the lock treated it as a new
+// code complaint and the gate returned APPROVE.
+test('cycle 2 scope lock does not suppress an observed regression that also cites the contract', () => {
+  const previousReview = review({
+    findings: `1. **[MAJOR]** — Logic (AC2) — \`src/enemy.js:8\`
+   Stomp awards no score.
+   Proof: \`src/enemy.js:8\` returns before the score event.`,
+    verdict: 'REQUEST_CHANGES',
+  });
+  const findings = `1. **[MAJOR]** — Regression (AC1) — \`src/main.js\`
+   The fix is exact at one window size and breaks three others.
+   Proof: Observed: at ratio 1.5 in a 1280x800 window the last column of the picture is page background; the previous revision drew it.`;
+  const result = validateReview({
+    spec,
+    previousReview,
+    review: review({ productCheck: passingCheck, findings, verdict: 'REQUEST_CHANGES' }),
+  });
+
+  assert.equal(result.effective_verdict, 'REQUEST_CHANGES');
+  assert.equal(result.counts.demoted, 0);
+});
+
+test('the observation exemption needs a stated observation, not a file reference', () => {
+  const previousReview = review({
+    findings: `1. **[MAJOR]** — Logic (AC2) — \`src/enemy.js:8\`
+   Stomp awards no score.
+   Proof: \`src/enemy.js:8\` returns before the score event.`,
+    verdict: 'REQUEST_CHANGES',
+  });
+  const findings = `1. **[MAJOR]** — Old scope (AC1) — \`src/main.js:12\`
+   New complaint on a file the first review did not fault.
+   Proof: \`src/main.js:12\` has an old scope.`;
+  const result = validateReview({
+    spec,
+    previousReview,
+    review: review({ productCheck: passingCheck, findings, verdict: 'REQUEST_CHANGES' }),
+  });
+
+  assert.equal(result.effective_verdict, 'APPROVE');
+  assert.deepEqual(result.demoted_findings[0].demotion_reasons, ['OUT_OF_CYCLE_SCOPE']);
+});
+
+// Also from run E4: every earlier review had approved, so the "previous review"
+// named no blocking finding and the lock it produced was empty. An empty lock
+// puts every file out of scope.
+test('a previous review with no blocking finding sets no scope lock', () => {
+  const previousReview = review({
+    findings: `1. **[MINOR]** — Polish — \`src/hud.js:3\`
+   Score is not zero-padded.`,
+    verdict: 'APPROVE',
+  });
+  const findings = `1. **[MAJOR]** — Logic (AC1) — \`src/main.js:40\`
+   The stage cannot be finished.
+   Proof: \`src/main.js:40\` returns before the clear event when lives = 1.`;
+  const result = validateReview({
+    spec,
+    previousReview,
+    review: review({ productCheck: passingCheck, findings, verdict: 'REQUEST_CHANGES' }),
+  });
+
+  assert.equal(result.effective_verdict, 'REQUEST_CHANGES');
+  assert.equal(result.counts.demoted, 0);
+});
+
 // The doctrine below is prose, but it is the prose every harness runs. These
 // assertions pin the rules a later edit must not quietly drop.
 test('every harness entrypoint carries the product-grounding rules', () => {
@@ -320,6 +386,12 @@ test('every harness entrypoint carries the product-grounding rules', () => {
     assert.match(vivaldi, /the user's request in their own words/, harness);
     assert.match(vivaldi, /Solo shape, Ralph runs once, after the review's effective verdict is APPROVE/, harness);
     assert.match(vivaldi, /does not cover any `Q#` in `product_check\.not_graded`/, harness);
+    // From run E4: three polish passes on approved reviews, and a re-test after
+    // the tester's failures that needed no second tester.
+    assert.match(vivaldi, /send them \*\*once, as one batch\*\*, to the \*\*same\*\* Linus/, harness);
+    assert.match(vivaldi, /go on DELIVER's list, not back to the builder/, harness);
+    assert.match(vivaldi, /Solo shape, do not dispatch Ralph again\*\* for the re-test/, harness);
+    assert.match(vivaldi, /Pass it only for a re-review that follows `REQUEST_CHANGES`/, harness);
   }
 });
 
@@ -337,6 +409,7 @@ test('persona skills carry their half of the product-grounding contract', () => 
   assert.match(cobalt, /^## Product Check$/m);
   assert.match(cobalt, /PRODUCT_DEFECT/);
   assert.match(cobalt, /NOT_RUN/);
+  assert.match(cobalt, /Prove it with a `Proof: Observed:` line whichever ID it cites/);
 
   const peter = skill('10x-peter-spec');
   assert.match(peter, /^## Experience Criteria/m);

@@ -23,6 +23,7 @@ Runs A to E all carry the same brief, and that brief turned out to be the proble
 | O1, O2 | `run-O1-fable-solo-open-brief.md` (O2 is the same prompt with `run-O2/` and port 5222) | Fable 5.2, high | Solo build, open brief |
 | E2 | `run-E2-updated-squad-open-brief.md` | Fable 5.2, high (orchestrator) | Squad from this branch, Sonnet builder, tester once |
 | E3 | `run-E3-upgraded-squad.md` | Fable 5.2, high (orchestrator) | As E2 with a Fable builder (workspace routing file in the run folder), a one-page spec, and the request passed to the builder word for word |
+| E4 | `run-E4-ladder-routing.md` | Fable 5.2, high (orchestrator) | As E3 with the released squad, an Opus builder at high effort and the tester at medium effort (workspace routing file in the run folder) |
 
 A squad run's opening message must begin with the typed `/10x-squad` command; the orchestrator skill cannot be loaded by a model on its own.
 
