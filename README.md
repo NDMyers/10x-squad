@@ -269,7 +269,17 @@ node .10x-squad/runtime/control.js validate-handoff --spec <spec.md> [--brief <b
 node .10x-squad/runtime/control.js validate-project --project <project-directory>
 node .10x-squad/runtime/control.js transition-project --project <project-directory> --state <next-state.json> --expected-updated-at <current-timestamp>
 node .10x-squad/runtime/control.js generate-registry --projects-root <projects-directory> --output <PROJECTS.md>
+node .10x-squad/runtime/control.js record-cost --project <project-directory> [--since <ISO time>] [--session-id <id> | --events <events.jsonl>] [--overwrite true]
 ```
+
+`record-cost` rebuilds `cost.md` from the Copilot session log (`events.jsonl`): credits, calls, peak
+context, premium-rate calls and compactions per dispatch, and the cost of each stretch between
+prompts. It counts every turn of a dispatch, including resumed ones that dispatch results never
+report. It finds the session from `COPILOT_AGENT_SESSION_ID` unless `--session-id` or `--events` is
+given, never replaces a hand-written `cost.md` without `--overwrite true`, and returns
+`TELEMETRY_UNAVAILABLE` when no log exists, in which case rows are kept by hand. Pass
+`--record-cost true` to `advance-phase` to refresh it at each transition. Other harnesses record no
+usage this way and keep the hand-written rows.
 
 The project registry supports gradual migration: directories without `project.json` remain visible
 as `UNMANAGED`, but must receive validated state before the squad resumes them.
@@ -292,6 +302,27 @@ counted as elapsed wall time, not the sum of overlapping agent durations. Invali
 reported rather than silently discarded. Model profiles are shown as `unresolved` unless a harness
 and valid routing configuration are supplied; Vivaldi's configured model is labeled as an advisory,
 not the observed parent model.
+
+## Builder checkpoints and context recovery
+
+Builder budgets are checkpoint intervals, not deadlines to finish a task. Short follow-ups retain
+the builder's context. When a work-order budget is exhausted with work left, context pressure
+remains, the child is unavailable, or the user requests it, Vivaldi starts a new builder context
+in the same workspace. Productive work continues without weakening acceptance criteria or
+resetting review/retry counts or any user-approved total budget.
+
+Before that switch, Linus saves compact disk memory in the project's `builder-state.md` (or
+`10x-squad-artifacts/checkpoints/{task-slug}-builder.md` for Trivial/Lite continuations): requirements,
+decisions, cumulative progress, failed approaches, dirty files, running commands, evidence and the
+next action. The next builder reconciles this state with live code rather than replaying the old
+transcript. Only one builder may write at a time; partial checkpoints never advance to review.
+Native compaction can relieve context pressure when supported, but a normal follow-up is not a
+reset. Unsupported fresh-context dispatch is reported as `CONTEXT_RESET_UNAVAILABLE`.
+
+This is an orchestration/skill policy, not a new runtime compactor or enforced spend limit.
+The checkpoint numbers and cost/quality benefit remain unvalidated. Fresh context can reduce
+accumulated-history cost; it also has handoff and rereading overhead, and total cost still grows
+with the amount of work. The budget-and-ceiling eval is paused in favor of comparing future real-work reports.
 
 ## Development
 
@@ -321,6 +352,14 @@ preserves uniquely addressed raw JSONL events under `evals/runs/`, and appends o
 metrics to `evals/results.csv`; unavailable token or cost values remain blank rather than being
 reported as zero. One eval process owns a results CSV at a time; use separate `RESULTS_CSV` paths
 for concurrent suites.
+
+On Copilot runs the CSV also records cost from the session's usage records (credits, credits by
+persona, peak context, surcharge credits, compactions), and a task's `check.sh` may print
+`QUALITY=<0 to 1>` to record a quality score. `EVAL_MAX_SECONDS` and `EVAL_MAX_CREDITS` stop a
+runaway run and record that it was stopped, and `EVAL_SQUAD_ROOT` installs from a different squad
+checkout. A results file written before these columns existed is refused; start a new one. The first
+experiment built on this, budget and context ceiling against quality, is in
+`evals/experiments/budget-and-ceiling/`.
 
 ## The source-of-truth rule
 

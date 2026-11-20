@@ -25,6 +25,15 @@ const COLUMNS = [
   'tool_calls',
   'cost_usd',
   'event_parse_errors',
+  'credits',
+  'credits_by_persona',
+  'peak_context_tokens',
+  'surcharge_credits',
+  'compactions',
+  'follow_ups',
+  'cost_source',
+  'quality',
+  'stopped_by',
   'raw_events',
 ];
 const HEADER = COLUMNS.join(',');

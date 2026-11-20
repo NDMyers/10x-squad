@@ -58,13 +58,13 @@ If `.10x-squad/runtime/control.js` is not present in the workspace, run `node ~/
 6. **Collect results before advancing.** A dispatch may complete inline, or it may return a background-launch acknowledgement whose result arrives later as a task notification (the desktop app does this). Never advance a gate, never run `advance-phase`, and never describe a persona's output until that persona's result has actually arrived; never predict or fabricate a pending result.
 7. **Executed-model confirmation is not available inside the session.** The dispatch result does not report the child's model. Accepted dispatch arguments are the in-session evidence; the pre-launch rejection of an invalid model is the backstop. Do not claim executed-model verification. (The eval harness verifies executed models from `claude -p --output-format stream-json`, where child turns carry `message.model`.)
 
-### Continuing the same builder
+### Builder continuation
 
-When a revision, a review finding, or an advisor's answer goes back to Linus, continue the Linus you already dispatched instead of starting a new one: send the follow-up to that agent by the id or name its dispatch returned (the `SendMessage` tool), so it keeps the context in which it made its choices. A continued agent keeps the model and effort it was dispatched with; announce the routing line again with `(continued)`. If the agent can no longer be continued, dispatch a new Linus and give it `build.md`, the current diff, and the findings.
+Apply Step 4's retained-or-fresh policy. For retained context, send the follow-up to the existing agent using the available continuation tool (`SendMessage` where exposed), keeping its model and effort and announcing `(continued)`. For fresh context, make a new `Agent`/`Task` dispatch to `10x-linus` with the newly resolved profile and the lean recovery payload, not a message to or a resume of the old agent. Announce `(fresh context)` with the reason and saved builder-state path. Keep the same workspace, wait for the old writer to finish, and do not use `fork` or create a new isolated checkout. If independent context in that workspace is unavailable, report `CONTEXT_RESET_UNAVAILABLE`. Each continuation keeps the work-order budget and quality gates from Step 4.
 
 ### Cost capture
 
-A dispatch result usually ends with a usage block (total tokens, tool uses, duration). Copy those figures into the project's `cost.md` row for that dispatch when the result arrives. If a result carries no usage block, write `not captured`; never estimate.
+A dispatch result usually ends with a usage block (total tokens, tool uses, duration). Copy those figures into the project's `cost.md` row for that dispatch when the result arrives. If a result carries no usage block, write `not captured`; never estimate. If a continued agent's later turns report no usage, record them as `not captured` rather than reusing the first turn's figures. The `record-cost` command reads Copilot session logs and does not apply on this surface.
 
 ### Concurrency and depth
 

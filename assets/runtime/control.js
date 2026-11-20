@@ -10,6 +10,7 @@ const { validateReview } = require('./review-validator');
 const { openDashboard, renderBoard, serveBoard, syncProjectDashboard, toggleUi } = require('./workflow-board');
 const { partitionFilePlan, verifyBuild } = require('./build-verifier');
 const { advancePhase } = require('./phase-runner');
+const { recordCost } = require('./cost-recorder');
 const { detectSurface } = require('./surface');
 
 function parseHandoffOptions(args) {
@@ -108,6 +109,7 @@ function main(argv) {
     'verify-build',
     'partition-plan',
     'advance-phase',
+    'record-cost',
     'validate-project',
     'transition-project',
     'generate-registry',
@@ -118,7 +120,7 @@ function main(argv) {
     'detect-surface',
   ].includes(command)) {
     console.error(
-      'usage: control.js <validate-handoff|validate-review|verify-build|partition-plan|advance-phase|validate-project|transition-project|generate-registry|render-board|serve-board|toggle-ui|open-dashboard|detect-surface> [options]'
+      'usage: control.js <validate-handoff|validate-review|verify-build|partition-plan|advance-phase|record-cost|validate-project|transition-project|generate-registry|render-board|serve-board|toggle-ui|open-dashboard|detect-surface> [options]'
     );
     return 2;
   }
@@ -208,7 +210,7 @@ function main(argv) {
       const options = parseNamedPaths(
         args,
         ['project', 'to'],
-        ['next-action', 'repo-root', 'workspace-root', 'harness', 'enforce-file-plan']
+        ['next-action', 'repo-root', 'workspace-root', 'harness', 'enforce-file-plan', 'record-cost']
       );
       const result = advancePhase({
         projectDirectory: options.project,
@@ -218,6 +220,20 @@ function main(argv) {
         workspaceRoot: options['workspace-root'],
         harness: options.harness,
         enforceFilePlan: options['enforce-file-plan'] === 'true',
+        recordCost: options['record-cost'] === 'true',
+      });
+      console.log(JSON.stringify(result));
+      return result.ok ? 0 : 1;
+    }
+
+    if (command === 'record-cost') {
+      const options = parseNamedPaths(args, ['project'], ['events', 'session-id', 'since', 'overwrite']);
+      const result = recordCost({
+        projectDirectory: options.project,
+        eventsPath: options.events,
+        sessionId: options['session-id'],
+        since: options.since,
+        overwrite: options.overwrite === 'true',
       });
       console.log(JSON.stringify(result));
       return result.ok ? 0 : 1;

@@ -421,3 +421,44 @@ test('persona skills carry their half of the product-grounding contract', () => 
   assert.match(ralph, /fail for the right reason/i);
   assert.match(ralph, /## Not Covered/);
 });
+
+test('all harnesses distinguish real context replacement from a follow-up without weakening completion gates', () => {
+  for (const harness of ['copilot', 'codex', 'claude', 'antigravity']) {
+    const vivaldi = composeVivaldi(harness);
+    assert.match(vivaldi, /Retain context\*\* for a short follow-up/, harness);
+    assert.match(vivaldi, /work-order budget is exhausted with work left/, harness);
+    assert.match(vivaldi, /not the session's historical peak/, harness);
+    assert.match(vivaldi, /Save builder state first/, harness);
+    assert.match(vivaldi, /new-child dispatch/, harness);
+    assert.match(vivaldi, /old child has ended its work order and any in-flight writing commands have finished/, harness);
+    assert.match(vivaldi, /staged, unstaged and untracked work preserved/, harness);
+    assert.match(vivaldi, /do not run the BUILD-to-REVIEW transition while work remains/, harness);
+    assert.match(vivaldi, /Fresh context must not advance pipeline state, clear blockers, reset retry counts/, harness);
+    assert.match(vivaldi, /No progress is not a reason to reset and try again/, harness);
+    assert.match(vivaldi, /Evidence shows a new, relevant finding/, harness);
+    assert.match(vivaldi, /a legitimate command is still running, wait for its completion/, harness);
+    assert.match(vivaldi, /Keep builder-state private to the builder and Vivaldi/, harness);
+
+    const routing = vivaldi.slice(vivaldi.indexOf('## Model Routing'), vivaldi.indexOf('## Todo Schema'));
+    assert.match(routing, /retained-or-fresh policy/, harness);
+    assert.match(routing, /\(fresh context\)/, harness);
+    assert.match(routing, /CONTEXT_RESET_UNAVAILABLE/, harness);
+    assert.doesNotMatch(routing, /instead of starting a new one|otherwise re-dispatch with `build\.md`/, harness);
+  }
+});
+
+test('builder disk memory preserves cumulative work and verifies live state before recovery', () => {
+  const linus = fs.readFileSync(path.join(packageRoot, 'assets', 'skills', '10x-linus-build', 'SKILL.md'), 'utf8');
+  assert.match(linus, /State: <absolute path to the saved builder-state file>/);
+  assert.match(linus, /preserve its requirements here in the user's own words/);
+  assert.match(linus, /Preserve earlier completed work/);
+  assert.match(linus, /Decisions and failed approaches/);
+  assert.match(linus, /pre-existing user changes that must be preserved/);
+  assert.match(linus, /results invalidated by later edits/);
+  assert.match(linus, /fresh context does not reset those counts/);
+  assert.match(linus, /On fresh-context dispatch or after native compaction, read this state and the referenced request\/spec before editing/);
+  assert.match(linus, /reconcile them with the saved state/);
+  assert.match(linus, /report `BLOCKED:` for unresolved decisions/);
+  assert.match(linus, /whole build across all work orders/);
+  assert.doesNotMatch(linus, /continues you with your context intact/);
+});

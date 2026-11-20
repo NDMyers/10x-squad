@@ -8,6 +8,7 @@ const { partitionFilePlan, verifyBuild } = require('./build-verifier');
 const { generateRegistry, transitionProject } = require('./project-state');
 const { inspectProjectBoard, syncProjectDashboard } = require('./workflow-board');
 const { loadModelTierConfig, resolvePersonaProfile } = require('./model-resolver');
+const { recordCost: writeCostRecord } = require('./cost-recorder');
 
 function nextTimestamp(previousIso) {
   const now = Date.now();
@@ -95,6 +96,7 @@ function advancePhase({
   workspaceRoot,
   harness,
   enforceFilePlan = false,
+  recordCost = false,
 }) {
   const resolvedProjectDir = path.resolve(projectDirectory);
   const statePath = path.join(resolvedProjectDir, 'project.json');
@@ -309,6 +311,15 @@ function advancePhase({
     boardError = { code: 'BOARD_UPDATE_FAILED', message: error.message };
   }
 
+  let cost = null;
+  if (recordCost) {
+    try {
+      cost = writeCostRecord({ projectDirectory: resolvedProjectDir });
+    } catch (error) {
+      cost = { ok: false, errors: [{ code: 'COST_RECORD_FAILED', message: error.message }] };
+    }
+  }
+
   return {
     ok: true,
     previous_phase: transition.previous_phase,
@@ -325,6 +336,7 @@ function advancePhase({
     sharpness: boardSummary,
     ui: uiSync,
     board_error: boardError,
+    cost,
     state: transition.state,
     errors: [],
   };

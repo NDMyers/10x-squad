@@ -237,11 +237,37 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 **Before invoking Linus:** When dispatching the dedicated `10x-linus` custom agent, its `10x-linus-build` instructions are already preloaded — do NOT call `skill` in Vivaldi's parent session. Load the `10x-linus-build` skill only when dispatching a generic subagent without preloaded persona instructions.
 
-1. Send Linus the spec, the user's request in their own words, relevant file contents, how to run the product, and the project's `evidence/` folder path for screenshots and captured output. Give him the request word for word wherever it states ambition, scope, or how the result will be judged, and tell him the spec is the floor and the request is the bar.
+1. Send Linus the spec, the user's request in their own words, relevant file contents, how to run the product, and the project's `evidence/` folder path for screenshots and captured output. Give him the request word for word wherever it states ambition, scope, or how the result will be judged, and tell him the spec is the floor and the request is the bar. Name the absolute workspace path and a durable builder-state path: `10x-squad-artifacts/projects/{task-slug}/builder-state.md` for Standard/Complex, or `10x-squad-artifacts/checkpoints/{task-slug}-builder.md` for Trivial/Lite (created only when a continuation is needed). This is the builder's memory, not a second spec.
 2. Verify changes were applied, and that the hand-back has all three sections: `## Changelist`, `## Deviations`, `## Observed`. Read `## Deviations` yourself: a deviation that changes what the user asked for goes to the user (or to Peter as an amendment) before review; the rest are recorded in `decisions.md`. Never send work back merely for deviating — flagged deviations are how a spec written before anything ran gets corrected.
-   - **Stuck builder.** If Linus returns `BLOCKED:`, do not replace him. Dispatch Einstein in advisor mode with the question and the paths involved, then continue the **same** Linus with the answer (resume his context where the harness allows; otherwise re-dispatch with `build.md`, the diff, and the answer).
+   - **Partial or blocked work stays in BUILD.** A `## Checkpoint` is not a completed hand-back: do not run the BUILD-to-REVIEW transition while work remains.
+   - **Stuck builder.** If Linus returns `BLOCKED:`, dispatch Einstein in advisor mode with the question and the paths involved, then continue the same builder work with the answer using the continuation policy below. A fresh context is not a new attempt: retain the failed approaches and blocker until the answer actually addresses them.
 3. **Fast syntax/lint self-check:** Linus performs only a fast, file-scoped syntax/lint check on its touched files (`node --check` for `.js`/`.cjs`/`.mjs`, `ruby -c` plus `rubocop_changed_lines` when `.rb` files were changed and `/rubocop_changed_lines` exists, or targeted `tsc --noEmit` when fast). Separately from this check, Linus must run the thing he built and report what he saw under `## Observed`. Linus does NOT run full test suites, E2E suites, or repo-wide builds during Step 4 — `advance-phase` (`verify-build`) checks syntax and scope mechanically, and Ralph owns test execution in Step 6. Max 2 self-fix cycles for syntax/lint offenses.
 4. Save Linus's changelist to `build.md`, run the BUILD trace gate (or `advance-phase --to REVIEW`), and on success transition validated `project.json` from BUILD to REVIEW before dispatching reviewers.
+
+**Bounded work orders.** Every dispatch to Linus, and every resume of him (a blocked answer, a review revision, test failures, a polish batch), is a work order with three parts: the scope for this turn, a budget, and a required ending. The budget is a ceiling on tool calls and on wall-clock time. Start with about 200 calls or 60 minutes, whichever comes first, and set it lower for a narrow revision. These are unvalidated checkpoint defaults, not a deadline to finish the task or a runtime-enforced kill switch. Reserve room to save state; never rush, drop requirements, or skip verification to fit a turn. Linus ends incomplete work with a `## Checkpoint`: **Done**, **Left**, **Evidence**, **Budget used**, and the **State** path, as defined in his skill. Completed work uses the normal three-section hand-back. Productive tasks may continue across as many work orders as needed, subject to any user-approved total budget; a fresh child never resets that budget or the review/retry counts.
+
+At each checkpoint, before resuming him, decide from what it says and what it cost:
+- On a harness that records usage, run `record-cost` and read the "Work between prompts" row for the stretch that just ended: calls, credits, time.
+- **Left is shorter or Evidence shows a new, relevant finding** → continue the remaining scope with a fresh work-order budget using the policy below. Legitimate investigation can advance without an edit or a shorter checklist.
+- **Neither Left nor Evidence shows progress** → do not resume with the same order. If a legitimate command is still running, wait for its completion without polling or starting a replacement. Otherwise treat it as `BLOCKED`: dispatch Einstein in advisor mode, or stop and present state, blocker and recommendation to the user.
+- A stretch that cost several times the others → say so in DELIVER's cost line, so the user sees where the cost went.
+
+### Builder continuation: retained or fresh context
+
+"Same Linus" means one sequential owner of the same deliverable and its decisions, not an immortal chat history. Apply this policy to checkpoints, advisor answers, review revisions, test failures, and polish batches:
+
+- **Retain context** for a short follow-up when the child is available and there is no context-pressure signal. A follow-up message does not reset or compact context.
+- **Use fresh context** when the work-order budget is exhausted with work left, the user requests it, the old child is unavailable, or context pressure remains unresolved. Pressure means a current harness near-limit warning or current usage entering a documented model price band, not the session's historical peak. Do not invent token limits when telemetry is unavailable; the work-order boundary still provides a reset point.
+- **Native compaction** may relieve pressure before that boundary when the harness actually supports it. Save builder state first when the harness permits, preserve requirements and decisions, and inspect the reported active context afterward. If the harness does not expose compaction or its result, do not claim a reset. Budget exhaustion still calls for a fresh child; compaction alone does not replenish the work-order budget.
+- **No progress is not a reason to reset and try again.** Resolve the blocker or escalate first; changing context must not hide a stalled loop.
+
+Before fresh dispatch, require up-to-date disk memory: requirements/spec pointers, workspace identity and dirty state, cumulative changes and deviations, decisions and failed approaches, blockers, commands/evidence, next action and accounting. Linus's **Disk memory and fresh-context recovery** section defines the writer's contract. If state is missing or stale, have the existing child save it first; if that child is unavailable, reconstruct only verified state from the request/spec, workspace and evidence, marking unknown decisions explicitly. If a necessary decision cannot be recovered, report the blocker rather than guessing. Carry the prior checkpoint's compact progress and cost summary into the next work order for comparison, not the full checkpoint history.
+
+Wait until the old child has ended its work order and any in-flight writing commands have finished. Then use the harness's **new-child dispatch**, not its follow-up/resume operation, in the **same workspace** with all committed, staged, unstaged and untracked work preserved. Never create a clean checkout, discard edits, fork the old transcript, or run two builders on this deliverable. Re-resolve the configured Linus profile normally; do not lower effort or change the configured context tier as a cost shortcut.
+
+The fresh payload is only the remaining work order (including current tier, phase, review/retry counts and any remaining authorized total budget), the original user requirements, the exact spec and builder-state paths, and any newly authorized answer or revision. Let Linus retrieve relevant source and evidence by path, not by replaying the old transcript. Do not inject all of `decisions.md`, a deliberation transcript, or review reasoning that the Context Visibility Matrix excludes. Record the old/new child handles and the reset reason beside the checkpoint's budget figures. If a surface cannot create an independent context or access the same workspace, report `CONTEXT_RESET_UNAVAILABLE` and the limitation; never label a normal resume as fresh context.
+
+Fresh context must not advance pipeline state, clear blockers, reset retry counts, or waive acceptance and review gates. Keep builder-state private to the builder and Vivaldi so independent reviewers still meet the product cold.
 
 ---
 
@@ -269,7 +295,7 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
    `validate-review` automatically demotes ungrounded or proof-less `CRITICAL`/`MAJOR` findings to advisory `MINOR` (`demoted_findings`) and computes `effective_verdict`. Route on `effective_verdict`:
    - **APPROVE** → Step 6 (or deliver if Lite). If `product_check.unverified` is `true`, or the review says `NOT_RUN`, the approval covers the diff only: either run the product yourself and record what you saw, or carry "product not reviewed" into the DELIVER report. Never let an approval of the diff stand in for a review of the product. An approval also does not cover any `Q#` in `product_check.not_graded`. Motion, feel and sound usually cannot be judged in a harness that renders a few frames a second or plays no audio, so these are the qualities most often left ungraded and the ones a person notices first. Name each ungraded quality at DELIVER as the user's to check, with what to look for (for example: how the view moves when the player turns around).
    - **APPROVE with `MINOR` findings, Solo shape** → `MINOR` findings are advisory and do not block. If any is worth fixing before delivery, send them **once, as one batch**, to the **same** Linus, have Cobalt check that diff narrowly, then go to Step 6 (or deliver if Lite). `MINOR` findings raised after that pass go on DELIVER's list, not back to the builder, with two exceptions: a regression the polish pass itself introduced, and a finding you judge to block the user's stated bar, in which case record why in `decisions.md`. A reviewer shown each new revision will keep finding things to polish; every further pass costs a builder and a reviewer, and can break something that worked.
-   - **REQUEST_CHANGES** → transition validated `project.json` from REVIEW to BUILD, and send the revision to the **same** Linus who built it (resume his context where the harness allows), because he still knows why each choice was made. Merge only `verified_findings` and any failed `Q#` from `product_check.failed` (`CRITICAL`/`MAJOR` with contract citation + falsifiable `Proof:`) — plus Ralph's test failures if Ralph ran concurrently in the verification wave — into one focused revision for Linus. Max 2 cycles. On Cycle 2, pass `--previous-review` to lock re-review to Cycle 1's file scope. Pass it only for a re-review that follows `REQUEST_CHANGES`: a narrow re-check after an `APPROVE` has no Cycle 1 scope to lock to.
+   - **REQUEST_CHANGES** → transition validated `project.json` from REVIEW to BUILD, and send the revision to the **same** Linus workstream using Step 4's retained-or-fresh continuation policy, preserving why earlier choices were made. Merge only `verified_findings` and any failed `Q#` from `product_check.failed` (`CRITICAL`/`MAJOR` with contract citation + falsifiable `Proof:`) — plus Ralph's test failures if Ralph ran concurrently in the verification wave — into one focused revision for Linus, sent as a bounded work order (Step 4). Max 2 cycles. On Cycle 2, pass `--previous-review` to lock re-review to Cycle 1's file scope. Pass it only for a re-review that follows `REQUEST_CHANGES`: a narrow re-check after an `APPROVE` has no Cycle 1 scope to lock to.
    - **SPEC_DISPUTE** → transition validated `project.json` from REVIEW to PLAN, then send the amendment prompt to Peter. Max 1 cycle.
 4. **Decision capture (Standard/Complex):** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged). If CRITICAL/MAJOR findings caused implementation changes, append a `## REVIEW — {date}` entry to `decisions.md`. If SPEC_DISPUTE was resolved, append a `## DISPUTE — {date}` entry. Update `CONTEXT.md`, then transition validated `project.json` to TEST or DELIVER with current review pointers. You may also render the live workflow and contract-sharpness board at any transition via `node .10x-squad/runtime/control.js render-board --project 10x-squad-artifacts/projects/{task-slug} --format markdown`.
 
@@ -285,7 +311,7 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 2. Keep Ralph's `## Not Covered` and any `NOT_CHECKED` entries from `## Falsification`: they go into the DELIVER report. `ALL_PASS` means the tests that ran passed; it is not a statement that the product works.
 3. Route on verdict:
    - **ALL_PASS** → save `tests.md`, then transition validated `project.json` from TEST to DELIVER before Step 7.
-   - **FAILURES_FOUND** → transition validated `project.json` from TEST to BUILD, then send failure details to the **same** Linus. Max 2 cycles. In **Solo shape, do not dispatch Ralph again** for the re-test: when Linus hands back, run the suite Ralph left in the repository yourself, with the command from his `## Test Plan` or the tests' own README, and report the result as TESTED from your run. Have Cobalt check the fix narrowly as well: a fix written to pass one failing case can break cases the suite does not cover, and only someone using the product will see that. If the suite cannot be run without Ralph, dispatch him once more and say so at DELIVER.
+   - **FAILURES_FOUND** → transition validated `project.json` from TEST to BUILD, then send failure details to the **same** Linus as a bounded work order (Step 4). Max 2 cycles. In **Solo shape, do not dispatch Ralph again** for the re-test: when Linus hands back, run the suite Ralph left in the repository yourself, with the command from his `## Test Plan` or the tests' own README, and report the result as TESTED from your run. Have Cobalt check the fix narrowly as well: a fix written to pass one failing case can break cases the suite does not cover, and only someone using the product will see that. If the suite cannot be run without Ralph, dispatch him once more and say so at DELIVER.
 
 ---
 
@@ -301,7 +327,15 @@ Report what was built and how you know it works, by evidence class. Keep it shor
 
 Update todos. Ask if adjustments needed.
 
-**Cost record (every tier above Trivial).** Keep `cost.md` in the project folder (for Lite, report the same figures inline). Add one row per dispatch when its result arrives: persona, model, effort, wall-clock, and token and tool-use counts where the harness reports them — write `not captured` rather than estimating. At DELIVER add the totals: dispatches, revision cycles, wall-clock from first dispatch to delivery, tokens. A run whose cost was not recorded cannot be compared with any other way of doing the work.
+**Cost record (every tier above Trivial).** Keep `cost.md` in the project folder (for Lite, report the same figures inline). Dispatch results report only a dispatch's first turn, so hand-kept rows miss every resumed turn, which is where most of a long build's cost sits. On a harness whose session log records usage (Copilot CLI and the Copilot app), do not write the table by hand: run
+
+```
+node .10x-squad/runtime/control.js record-cost \
+   --project 10x-squad-artifacts/projects/{task-slug} \
+   [--since <ISO time of the first dispatch>]
+```
+
+or pass `--record-cost true` to `advance-phase`. It rebuilds `cost.md` from the session log, one row per dispatch with every turn counted, plus per-persona credits, peak context, premium-rate calls and the cost of each stretch between prompts. Pass `--since` when the session also did other work. It is safe to re-run at any checkpoint and at DELIVER, and it never replaces a hand-written `cost.md` unless told to with `--overwrite true`. If it returns `TELEMETRY_UNAVAILABLE` or the harness records no usage (Claude Code, Codex, Antigravity), fall back to one row per dispatch when its result arrives: persona, model, effort, wall-clock, and token and tool-use counts where the harness reports them — write `not captured` rather than estimating, and at DELIVER add the totals: dispatches, revision cycles, wall-clock from first dispatch to delivery, tokens. A run whose cost was not recorded cannot be compared with any other way of doing the work.
 
 **Milestone records.** Write narrative records (`CONTEXT.md`, `decisions.md`, issue-tracker comments) at phase transitions and decisions, not at every event. The runtime already records state; a second running log costs time and is where hand-written figures drift from the truth.
 
@@ -328,7 +362,7 @@ Cobalt may also receive the existing SonarQube coverage report and its source/re
 
 ## Context Engineering Rules
 
-1. **One writer per deliverable; judgement from clean contexts.** The builder decides everything the spec leaves open and carries the deliverable from spec to running result. Review and independent testing stay in separate contexts that have not seen the builder's reasoning. Never split one coupled deliverable across builders, and never ask the builder to grade his own work as the final word.
+1. **One writer per deliverable; judgement from clean contexts.** The builder decides everything the spec leaves open and carries the deliverable from spec to running result, using disk memory across sequential fresh contexts when Step 4 calls for it. Review and independent testing stay in separate contexts that have not seen the builder's reasoning. Never split one coupled deliverable across concurrent builders, and never ask the builder to grade his own work as the final word.
 2. **Context slicing.** Each sub-agent gets ONLY what the visibility matrix permits.
 3. **No context leakage.** Sub-agents never see full chat history, other agents' raw outputs (unless matrix permits), or Vivaldi's reasoning.
 4. **Vivaldi's context budget:** Directory listings unlimited. File reads for routing: max 80 lines per file. Deeper reads: delegate to the sub-agent.
@@ -366,6 +400,7 @@ Hybrid structure: **project folders** for Standard/Complex, **flat folders** for
 ├── PROJECTS.md                          # Derived registry; never edited manually
 ├── briefs/                              # Trivial/Lite briefs only ({task-slug}-brief.md)
 ├── specs/                               # Trivial/Lite specs only ({task-slug}-spec.md)
+├── checkpoints/                         # Trivial/Lite builder memory, only when continuing
 ├── projects/
 │   ├── {task-slug}/                     # Standard/Complex projects
 │   │   ├── project.json                 # Validated canonical execution state
@@ -373,8 +408,9 @@ Hybrid structure: **project folders** for Standard/Complex, **flat folders** for
 │   │   ├── brief.md                     # Einstein's brief (if deliberation occurred)
 │   │   ├── spec.md                      # Peter's spec
 │   │   ├── build.md                     # Linus's changelist, deviations, and observations
+│   │   ├── builder-state.md             # Compact builder memory; never a completion artifact
 │   │   ├── evidence/                    # Screenshots, captured output, recorded runs
-│   │   ├── cost.md                      # One row per dispatch + totals at DELIVER
+│   │   ├── cost.md                      # Recorded from session usage (or one hand-kept row per dispatch) + totals at DELIVER
 │   │   ├── gate-plan.json                # Deterministic brief/spec trace result
 │   │   ├── gate-build.json               # Deterministic spec/build trace result
 │   │   ├── review.md                    # Cobalt's review
@@ -418,10 +454,11 @@ node .10x-squad/runtime/control.js advance-phase \
    --to <PLAN|BUILD|REVIEW|TEST|DELIVER> \
    [--repo-root "$PWD"] \
    --workspace-root "$PWD" \
-   --harness <surface>
+   --harness <surface> \
+   [--record-cost true]
 ```
 
-With `--harness`, missing, invalid, or unresolved persona routing fails before changing `project.json`; inspect `next_dispatches` and configure or reinstall the resolver. The `--harness` flag may be omitted only when next-persona resolution is not required.
+With `--harness`, missing, invalid, or unresolved persona routing fails before changing `project.json`; inspect `next_dispatches` and configure or reinstall the resolver. The `--harness` flag may be omitted only when next-persona resolution is not required. With `--record-cost true`, a successful transition also refreshes `cost.md` from session usage (result field `cost`); a recording failure is reported there and never fails the transition.
 
 When `advance-phase` returns `builder_partition.mode: "parallel_batches"` (`>= 4` files across `>= 2` 100%-disjoint file communities), that is necessary but not sufficient for parallel builders: files that do not import each other can still share decisions (a visual style, a data shape, a naming scheme, a feel). Dispatch parallel `Linus` builders only when the batches also pass the Step 0 coupling test — no builder would need to know what another decided — and the work in each batch is mechanically checkable. Otherwise, and always for `"single_builder"`, dispatch a single `Linus` builder.
 

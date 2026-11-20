@@ -120,7 +120,7 @@ test('dry-run eval emits the target-harness metric schema without a model call',
   const [header, row] = csvContent.trim().split(/\r?\n/);
   assert.equal(
     header,
-    'timestamp,variant,prompt_sha,harness,requested_model,requested_reasoning,observed_models,task,rep,pass,agent_exit,input_tokens,cached_input_tokens,output_tokens,duration_ms,model_calls,subagent_calls,tool_calls,cost_usd,event_parse_errors,raw_events'
+    'timestamp,variant,prompt_sha,harness,requested_model,requested_reasoning,observed_models,task,rep,pass,agent_exit,input_tokens,cached_input_tokens,output_tokens,duration_ms,model_calls,subagent_calls,tool_calls,cost_usd,event_parse_errors,credits,credits_by_persona,peak_context_tokens,surcharge_credits,compactions,follow_ups,cost_source,quality,stopped_by,raw_events'
   );
   assert.match(row, /,test-variant,[^,]+,copilot-cli,dry-run,auto,,smoke-hello,1,1,0,/);
   assert.match(csvContent, /\r\n$/);

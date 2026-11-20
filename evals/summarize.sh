@@ -19,6 +19,7 @@ done
 import csv
 import sys
 from collections import defaultdict
+from statistics import median
 
 rows = list(csv.DictReader(open(sys.argv[1], newline="")))
 groups = defaultdict(lambda: defaultdict(list))
@@ -32,9 +33,22 @@ for row in rows:
     )
     groups[key][row["task"]].append(row)
 
+def values(rows, field):
+    return [float(row[field]) for row in rows if (row.get(field) or "") != ""]
+
 def mean(rows, field):
-    values = [float(row[field]) for row in rows if row.get(field, "") != ""]
-    return None if not values else sum(values) / len(values)
+    found = values(rows, field)
+    return None if not found else sum(found) / len(found)
+
+def med(rows, field):
+    found = values(rows, field)
+    return None if not found else median(found)
+
+def spread(rows, field, digits=0):
+    found = values(rows, field)
+    if not found:
+        return "n/a"
+    return f"{min(found):.{digits}f}-{max(found):.{digits}f}"
 
 def shown(value, digits=0):
     if value is None:
@@ -59,4 +73,25 @@ for key, tasks in sorted(groups.items()):
         f"{shown(mean(flat, 'model_calls'), 1):>8}{shown(mean(flat, 'subagent_calls'), 1):>7}"
         f"{shown(mean(flat, 'cost_usd'), 3):>9}"
     )
+
+if any((row.get("credits") or "") != "" for row in rows):
+    print()
+    print("Cost and quality per task (credits are Copilot AI credits from usage records)")
+    print(
+        f"{'variant':<20}{'task':<22}{'n':>3}{'pass':>7}{'quality':>9}"
+        f"{'credits med':>13}{'range':>17}{'surcharge':>11}{'peak ctx':>10}{'compact':>9}{'stopped':>9}"
+    )
+    for key, tasks in sorted(groups.items()):
+        for task, task_rows in sorted(tasks.items()):
+            passed = sum(int(row["pass"]) for row in task_rows)
+            stopped = sum(1 for row in task_rows if (row.get("stopped_by") or "") != "")
+            peak = max(values(task_rows, "peak_context_tokens") or [None])
+            print(
+                f"{key[0]:<20}{task:<22}{len(task_rows):>3}{f'{passed}/{len(task_rows)}':>7}"
+                f"{shown(med(task_rows, 'quality'), 2):>9}"
+                f"{shown(med(task_rows, 'credits'), 1):>13}{spread(task_rows, 'credits', 1):>17}"
+                f"{shown(med(task_rows, 'surcharge_credits'), 1):>11}"
+                f"{shown(peak, 0):>10}"
+                f"{shown(med(task_rows, 'compactions'), 1):>9}{stopped:>9}"
+            )
 EOF

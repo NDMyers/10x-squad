@@ -34,9 +34,13 @@ The squad's gates used to answer one question: is the paperwork consistent? This
 
 **Builder routing.** The configure-tiers wizard no longer suggests low effort for the Builder lane, the "cheap builder executing a reviewed spec" rationale is removed from the routing docs, and Vivaldi warns once when the builder resolves to the lowest effort. Vivaldi still never changes a resolved value.
 
-**Stuck builders ask.** Linus reports `BLOCKED:`; Vivaldi consults Einstein in advisor mode and continues the same Linus with the answer.
+**Stuck builders ask.** Linus reports `BLOCKED:`; Vivaldi consults Einstein in advisor mode and continues the same builder work with the answer. A fresh context preserves the blocker and failed approaches instead of treating them as a new attempt.
 
-**Cost.** `cost.md` gets one row per dispatch and totals at DELIVER; figures that were not captured are written as such, never estimated.
+**Cost.** On Copilot, `record-cost` rebuilds `cost.md` from the session log, so every turn of a dispatch is counted, including resumed ones; elsewhere `cost.md` gets one hand-kept row per dispatch and totals at DELIVER, with figures that were not captured written as such, never estimated.
+
+**Bounded builder turns.** Every dispatch or resume of Linus carries a scope and a call and time budget; unfinished work ends in a `## Checkpoint`, not a completion claim. Vivaldi decides at each checkpoint whether to continue, using progress and the cost of the stretch just ended. New relevant evidence counts as progress even without an edit. Linus also stops and reports `BLOCKED:` after about ten calls that neither edit anything nor teach him anything new. The budget defaults (about 200 calls or 60 minutes) and the ten-call threshold are starting values that no eval has yet tuned.
+
+**Disk-backed context recovery.** Short follow-ups retain context; exhausted work orders, unresolved context pressure, unavailable children or explicit user requests use a new child in the same workspace. Linus saves requirements, decisions, cumulative changes, failed approaches, unfinished work and evidence to `builder-state.md` before handing off. Only one builder writes at a time, and the final hand-back covers all work orders. Native compaction may relieve pressure when supported, but resuming the same child is not a reset. Fresh context never resets retry counts, approved spend limits or quality gates. This is prompt-level orchestration, not a runtime compactor; its cost and quality effects still need measurement.
 
 **The request is the bar.** Added after the experiments below. Vivaldi passes the user's own words about ambition, scope and judging to Peter and to the builder; Peter is told not to turn an open request into a feature checklist and to write only the acceptance criteria whose absence the user would notice; Linus is told that meeting every `AC#` is the floor.
 
@@ -122,7 +126,7 @@ These are larger than a first step or need more than one run to settle.
 - **Dropping the tester from Solo shape.** Rounds one and two would support it: no revision was driven by a test result. In E4 the tester's one run found two edge-case failures nobody else had, at the cost of 88 minutes and about an hour of fixes. It stays at one run.
 - **A way to judge motion and sound.** No agent in these runs could see the game at full speed or hear it. Until one can, feel and audio are the user's to check, and DELIVER says so.
 - **Mandatory product review at Lite.** The solo-plus-review run in round one showed no gain the owner noticed, under the checklist brief. Not re-run under the open brief.
-- **Cost capture in the runtime.** `cost.md` is written by Vivaldi. A `record-cost` command and totals in `advance-phase` would make it deterministic.
+- **Cost capture beyond Copilot.** `record-cost` reads the Copilot session log. Claude Code, Codex and Antigravity record no usage this way and keep the hand-kept rows.
 - **Workflow board.** The monitor does not yet show the `observation` and `product_check` results.
 - **Sentinel.** Unchanged; it reviews the diff, not the product.
 - **Continuing a builder on Codex and Copilot.** `dispatch-claude.md` says how; the other dispatch contracts fall back to re-dispatch with `build.md` and the findings.

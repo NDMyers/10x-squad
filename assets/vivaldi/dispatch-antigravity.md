@@ -58,6 +58,10 @@ If `.10x-squad/runtime/control.js` is not present in the workspace, run `node ~/
 6. **Collect results before advancing.** Both `invoke_subagent` and `swarm` run asynchronously and wake the parent turn when the child completes or posts back. Never advance a gate, never run `advance-phase`, and never describe a persona's output until that persona's result has actually arrived; never predict or fabricate a pending result.
 7. **Executed-model confirmation is not available inside the session.** Neither `invoke_subagent` nor `swarm` reports the child's executed model identifier in the in-session tool return payload, so report `check_status` honestly (`unverified` / `addressability_probe` when identity was not observed). **Never claim executed-model verification on Antigravity** when only `addressability_probe` was recorded.
 
+### Builder continuation
+
+Apply Step 4's retained-or-fresh policy. Use an existing worker's continuation operation only for retained context, announcing `(continued)`. For fresh context, use a new `invoke_subagent` invocation or `swarm` add operation with the newly resolved model and lean recovery payload, not an update to the old worker. Announce `(fresh context)` with the reason and saved builder-state path. Wait for the old writer to finish and keep the same workspace. Check the active actuator's context-sharing behavior: if it inherits the old transcript or cannot create independent context in that workspace, report `CONTEXT_RESET_UNAVAILABLE` rather than claiming a reset. Each continuation keeps the work-order budget and quality gates from Step 4.
+
 ### Concurrency and depth
 
 Cobalt and Sentinel run as two concurrent depth-1 children of the root session: issue both dispatch calls **in the same turn** so they run in parallel, then wait for both results before running the review gate. Persona subagents must not dispatch their own subagents, and the pipeline never requires depth 2.

@@ -67,6 +67,10 @@ Do not use the `codex` binary path or `codex --version` to identify the surface.
    - **A stored assignment can become invalid without any local change.** The spawnable set is account- and time-dependent and has been observed to change within days. Treat a rejection as a configuration failure to report, never as an invitation to substitute a model that would still launch.
 6. **Executed-model confirmation is not available on this surface.** The spawn result returns only a child handle, the wait result only completion status, and the event stream carries no model field. Accepted dispatch arguments are the only evidence. **Never claim executed-model verification on Codex**, and never present an addressability success as identity proof. The pre-launch rejection of an invalid model is the backstop that replaces post-launch confirmation.
 
+### Builder continuation
+
+Apply Step 4's retained-or-fresh policy. Retain the child handle for short follow-ups using the active toolset's continuation operation and announce `(continued)`. For fresh context, use a new spawn through the detected v1/v2 call shape, not an input/resume operation on the old handle. Re-resolve Linus's profile, include his skill invocation and the lean recovery payload, and announce `(fresh context)` with the reason and saved builder-state path. Keep the same workspace and wait for the old writer to finish. Do not enable `fork_context` or carry over the old transcript; if the active tool cannot provide independent context in the same workspace, report `CONTEXT_RESET_UNAVAILABLE`. Retain the new handle for subsequent collection. Each continuation keeps the work-order budget and quality gates from Step 4.
+
 ### Concurrency and depth
 
 Cobalt and Sentinel run as two concurrent depth-1 children of the root session. Respect the session's `max_concurrent_threads_per_session` cap; if a spawn is refused for capacity, wait and retry rather than collapsing the two reviewers into one context. Persona children must not spawn their own subagents — `max_depth` defaults to 1, and the pipeline never requires depth 2.
