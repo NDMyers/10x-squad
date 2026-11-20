@@ -1,10 +1,10 @@
 # Budget and context-ceiling experiment
 
-Design only. Nothing here has been run.
+Controlled live comparison not run; Stage 0 tooling checks are recorded below. The experiment is paused in favor of comparing future real-work reports.
 
 ## The question
 
-The squad now gives builders a bounded work order (about 200 tool calls or 60 minutes per turn, ending in a checkpoint) and a no-progress stop (about 10 calls in a row that neither edit nor learn anything new, reported as blocked). A third idea, a context ceiling that makes the builder compact before the model's price cliff, is not built as a feature. The experiment approximates it by running the builder at the default context tier.
+The squad now gives builders a bounded work order (about 200 tool calls or 60 minutes per turn, ending in a checkpoint) and a no-progress stop (about 10 calls in a row that neither edit nor learn anything new, reported as blocked). The current branch also adds disk-backed fresh-context continuation at exhausted work orders or unresolved context pressure; short follow-ups retain context. A separate per-model token ceiling that forces compaction before the model's price cliff is not built as a feature. The experiment approximates that ceiling by running the builder at the default context tier.
 
 None of these numbers has been tested against quality. A tight budget could make a builder quit early, hand off badly, or ship unfinished work. A low ceiling could make it forget requirements after compaction. This experiment finds out whether the defaults cut cost without lowering quality, and where they stop being safe.
 
@@ -31,16 +31,16 @@ The second and third rows mean the ceiling arm needs no new code. Setting the bu
 
 ## Arms
 
-Two switches, so each effect can be read on its own and together:
+Two arm switches: the continuation-policy bundle and the configured context tier. The `budget` arm name is retained for the runner, but it no longer means budgets alone.
 
-| Arm | Budget and no-progress stop | Builder context tier | How it is built |
+| Arm | Budget, no-progress stop and disk-backed continuation | Builder context tier | How it is built |
 |---|---|---|---|
 | Baseline | Off (old behavior) | `long_context` | Run from a checkout of the commit before the bounded-work-order change |
-| Budget only | On (current defaults) | `long_context` | Run from the current branch |
+| Budget policy | On (current defaults, including fresh-context continuation) | `long_context` | Run from the current branch |
 | Ceiling only | Off | `default` | Old checkout plus a routing config that sets the builder tier |
-| Budget and ceiling | On | `default` | Current branch plus the same routing config |
+| Budget policy and ceiling | On | `default` | Current branch plus the same routing config |
 
-Held constant in every arm: harness (Copilot CLI), model, reasoning effort, the orchestrator and reviewer settings, the task prompt, and a fresh session per run. Use a GPT-6.2-family builder, because that is where the price cliff is. Name the exact model in the results table.
+Held constant in every arm: harness (Copilot CLI), model, reasoning effort, the orchestrator and reviewer settings, the task prompt, and a fresh session per run. Use a GPT-6.2-family builder, because that is where the price cliff is. Name the exact model in the results table. Record the squad commit and do not pool older budget-only runs with the new policy. The decision table's "Budget only" outcomes now apply to the whole policy bundle; attributing savings to fresh context alone needs a separate same-budget comparison.
 
 Sweep, only after the four arms say the idea works: budget of 100, 200 and 400 calls; no-progress threshold of 5, 10 and 20 calls; ceiling at default tier against a 400k ceiling once that exists. `run-arm.sh` templates those numbers (see Harness changes).
 
@@ -74,6 +74,7 @@ Cost, from `record-cost` on each run's session log:
 - Tool calls and wall-clock time
 - Peak context, number of compactions, and premium-rate calls with their surcharge credits
 - Follow-up prompts: how many times the orchestrator resumed a subagent after its first dispatch
+- Fresh-context dispatches and reasons, handoff/rereading overhead, retained requirements and repeated completed work (read from checkpoints and the transcript; `follow_ups` does not count new children)
 - Runs stopped by the spend guard, and whether a builder ended in a blocked report (read from the final diff and transcript, not a column)
 
 Headline numbers: credits per run, and credits per hidden test passed.
@@ -118,7 +119,7 @@ A difference counts only if it is larger than the Baseline spread and moves the 
 
 ## Fairness and confounds
 
-- One variable changes per comparison. Budget and tier change in separate arms before the combined one.
+- The policy bundle and context tier change in separate arms before the combined one. The bundle includes budgets, no-progress detection and fresh-context recovery, so it cannot isolate any one of those effects.
 - The baseline arm runs from a real earlier commit, not a hand-edited copy, so it is the old behavior and nothing else.
 - Order of runs is interleaved across arms, so time of day and model-side drift do not line up with one arm.
 - The judge and human see shuffled labels and never the arm or the credit figure.

@@ -303,6 +303,27 @@ reported rather than silently discarded. Model profiles are shown as `unresolved
 and valid routing configuration are supplied; Vivaldi's configured model is labeled as an advisory,
 not the observed parent model.
 
+## Builder checkpoints and context recovery
+
+Builder budgets are checkpoint intervals, not deadlines to finish a task. Short follow-ups retain
+the builder's context. When a work-order budget is exhausted with work left, context pressure
+remains, the child is unavailable, or the user requests it, Vivaldi starts a new builder context
+in the same workspace. Productive work continues without weakening acceptance criteria or
+resetting review/retry counts or any user-approved total budget.
+
+Before that switch, Linus saves compact disk memory in the project's `builder-state.md` (or
+`10x-squad-artifacts/checkpoints/{task-slug}-builder.md` for Trivial/Lite continuations): requirements,
+decisions, cumulative progress, failed approaches, dirty files, running commands, evidence and the
+next action. The next builder reconciles this state with live code rather than replaying the old
+transcript. Only one builder may write at a time; partial checkpoints never advance to review.
+Native compaction can relieve context pressure when supported, but a normal follow-up is not a
+reset. Unsupported fresh-context dispatch is reported as `CONTEXT_RESET_UNAVAILABLE`.
+
+This is an orchestration/skill policy, not a new runtime compactor or enforced spend limit.
+The checkpoint numbers and cost/quality benefit remain unvalidated. Fresh context can reduce
+accumulated-history cost; it also has handoff and rereading overhead, and total cost still grows
+with the amount of work. The budget-and-ceiling eval is paused in favor of comparing future real-work reports.
+
 ## Development
 
 ```

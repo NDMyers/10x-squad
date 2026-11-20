@@ -159,19 +159,19 @@ test('an arm routing config changes only the builder context tier', () => {
   assert.throws(() => buildArmConfig(legacyConfig(), { harness: 'codex-cli', linusContextTier: 'default' }), /no profile/);
 });
 
-function fakeSquadRoot(directory) {
+function copyBudgetPrompts(directory) {
   const core = path.join(directory, 'assets', 'vivaldi', 'core.md');
   const linus = path.join(directory, 'assets', 'skills', '10x-linus-build', 'SKILL.md');
   fs.mkdirSync(path.dirname(core), { recursive: true });
   fs.mkdirSync(path.dirname(linus), { recursive: true });
-  fs.writeFileSync(core, 'Start with about 200 calls or 60 minutes, whichever comes first.\n');
-  fs.writeFileSync(linus, 'Stop after about 10 calls in a row that neither edit a file.\n');
+  fs.copyFileSync(path.join(packageRoot, 'assets', 'vivaldi', 'core.md'), core);
+  fs.copyFileSync(path.join(packageRoot, 'assets', 'skills', '10x-linus-build', 'SKILL.md'), linus);
   return { core, linus };
 }
 
 test('budget numbers are replaced exactly once and a reworded prompt fails loudly', () => {
   const directory = tempDir();
-  const { core, linus } = fakeSquadRoot(directory);
+  const { core, linus } = copyBudgetPrompts(directory);
   applyNumbers(directory, { calls: 100, minutes: 30, noProgress: 5 });
   assert.match(fs.readFileSync(core, 'utf8'), /about 100 calls or 30 minutes/);
   assert.match(fs.readFileSync(linus, 'utf8'), /about 5 calls in a row/);

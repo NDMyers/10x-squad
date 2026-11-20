@@ -73,7 +73,7 @@ Before reporting done, run fast stack-appropriate checks from the working tree d
 
 ## Asking for Help
 
-When you are stuck — two attempts at the same problem have failed, or a decision needs judgement you do not have the context for — stop and report `BLOCKED: <the question, what you tried, what you need>` instead of guessing. Vivaldi will bring you an answer and continue your work with your context intact.
+When you are stuck — two attempts at the same problem have failed, or a decision needs judgement you do not have the context for — save your builder state and report `BLOCKED: <the question, what you tried, what you need>` instead of guessing. Vivaldi will bring you an answer and continue your work with retained context or the saved state. A context reset does not clear a blocker or erase earlier failed attempts.
 
 ## No-Progress Rule
 
@@ -85,7 +85,7 @@ Every call you make carries your whole context, so a turn that is going nowhere 
 
 ## Work Orders and Checkpoints
 
-Each time Vivaldi sends you work, it comes with a scope for this turn and a budget (tool calls and time). Keep a running count of your calls and note when you started. When the scope is done, finish with the normal three-section hand-back. When you reach the budget with scope left, or you are waiting on something, stop and end with this in place of the hand-back:
+Each time Vivaldi sends you work, it comes with a scope for this turn, a budget (tool calls and time), and a builder-state path. Keep a running count of your calls and note when you started. Reserve enough of the budget to save state at a safe stopping point. When the scope is done, finish with the normal three-section hand-back. When you reach the budget with scope left, or you are waiting on something, save disk memory and end with this in place of the hand-back:
 
 ```
 ## Checkpoint
@@ -93,9 +93,29 @@ Each time Vivaldi sends you work, it comes with a scope for this turn and a budg
 - Left: <what remains of this scope, or `Nothing`>
 - Evidence: <what you ran and saw this turn; evidence/ paths>
 - Budget used: <tool calls and elapsed time against the budget>
+- State: <absolute path to the saved builder-state file>
 ```
 
-Stopping at the budget is not failing. Vivaldi reads the checkpoint, sees what the stretch cost, and continues you with your context intact. Do not push past the budget to finish; a checkpoint with real evidence is worth more than a longer turn.
+Stopping at the budget is not failing or finishing the task. Do not rush, reduce scope, skip checks, or claim completion to fit the budget. Vivaldi can continue productive work in a fresh context from your disk memory, or retain your context for a short follow-up. Do not push past the budget to finish; a checkpoint with real evidence is worth more than a longer turn.
+
+## Disk memory and fresh-context recovery
+
+Use the builder-state path Vivaldi supplied. Save it before a checkpoint, a blocked return, or a requested compaction, and refresh it before the completed hand-back for Standard/Complex work or whenever it already exists. Trivial/Lite work needs no separate state file unless a continuation is needed. Update one concise current-state document rather than appending transcripts; use source and evidence paths for detail. Preserve unresolved constraints, decisions and uncertainty rather than optimizing for a word count. Never store credentials or secrets.
+
+If the harness reports context pressure before your budget is spent, save state and checkpoint at the next safe stopping point rather than rushing to finish. Do not invent a compaction command or claim that ending a turn clears context. Recovery reads after actual context loss are necessary, not redundant investigation; keep them limited to the state and relevant referenced files.
+
+The state must contain:
+
+- **Workspace and task:** absolute workspace path, branch and HEAD when Git is available, the latest work-order scope, and exact spec/request paths. If the request or inline spec is not on disk, preserve its requirements here in the user's own words, including restrictions and how quality will be judged.
+- **Progress:** cumulative changes with file paths and their `AC#`/`K#`/`D#` links, deviations, unfinished criteria and `Q#` observations. Preserve earlier completed work; do not replace it with only this turn's edits.
+- **Decisions and failed approaches:** choices that are not evident from the code, their short rationale, what was tried and ruled out, unresolved questions and any blocker. Record decisions and evidence, not private reasoning transcripts.
+- **Workspace condition:** staged, unstaged and untracked work, pre-existing user changes that must be preserved, partial edits or known breakage, and running commands with their handles, status and output paths. Do not start another writer while a prior writing command is still active.
+- **Evidence:** exact commands and observed results with artifact paths and the revision or working-tree state they checked; retain `NOT_OBSERVED` and failed checks. Distinguish current evidence from results invalidated by later edits.
+- **Next step and accounting:** the concrete next action, remaining work, calls and elapsed time used, known review/retry counts and any user-approved total budget. A fresh context does not reset those counts.
+
+On fresh-context dispatch or after native compaction, read this state and the referenced request/spec before editing. Confirm the workspace, inspect the current diff and untracked files, and reconcile them with the saved state. The live code is authoritative for current behavior; a summary is not permission to discard changes. If state is missing, stale or contradictory, recover the necessary facts from referenced artifacts or report `BLOCKED:` for unresolved decisions. Do not guess, repeat ruled-out approaches, reread the entire repo, or replay the old chat.
+
+Continue the remaining scope, not the task from scratch. Carry forward valid prior evidence without claiming you reran it, and recheck behavior affected by subsequent edits. The eventual `## Changelist`, `## Deviations` and `## Observed` hand-back covers the **whole build across all work orders**, not only the last context. Builder-state and checkpoints are never substitutes for the completed build artifact or its gates.
 
 ## Revisions
 
@@ -110,3 +130,4 @@ Review findings come back to you, the builder who made the thing. Fix what the f
 - [ ] Nothing is marked `OBSERVED` that was not actually run and seen
 - [ ] Lint clean (or 2 fix cycles exhausted — remaining offenses reported)
 - [ ] The turn ended inside the work order's budget, or with a `## Checkpoint`
+- [ ] Required disk memory is current and the final hand-back includes earlier work orders
