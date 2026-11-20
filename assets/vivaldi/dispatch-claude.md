@@ -60,11 +60,11 @@ If `.10x-squad/runtime/control.js` is not present in the workspace, run `node ~/
 
 ### Continuing the same builder
 
-When a revision, a review finding, or an advisor's answer goes back to Linus, continue the Linus you already dispatched instead of starting a new one: send the follow-up to that agent by the id or name its dispatch returned (the `SendMessage` tool), so it keeps the context in which it made its choices. A continued agent keeps the model and effort it was dispatched with; announce the routing line again with `(continued)`. If the agent can no longer be continued, dispatch a new Linus and give it `build.md`, the current diff, and the findings.
+When a revision, a review finding, or an advisor's answer goes back to Linus, continue the Linus you already dispatched instead of starting a new one: send the follow-up to that agent by the id or name its dispatch returned (the `SendMessage` tool), so it keeps the context in which it made its choices. A continued agent keeps the model and effort it was dispatched with; announce the routing line again with `(continued)`. If the agent can no longer be continued, dispatch a new Linus and give it `build.md`, the current diff, and the findings. Each continuation is a bounded work order (Step 4): scope, tool-call and time budget, and a `## Checkpoint` ending.
 
 ### Cost capture
 
-A dispatch result usually ends with a usage block (total tokens, tool uses, duration). Copy those figures into the project's `cost.md` row for that dispatch when the result arrives. If a result carries no usage block, write `not captured`; never estimate.
+A dispatch result usually ends with a usage block (total tokens, tool uses, duration). Copy those figures into the project's `cost.md` row for that dispatch when the result arrives. If a result carries no usage block, write `not captured`; never estimate. If a continued agent's later turns report no usage, record them as `not captured` rather than reusing the first turn's figures. The `record-cost` command reads Copilot session logs and does not apply on this surface.
 
 ### Concurrency and depth
 

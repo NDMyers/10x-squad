@@ -269,7 +269,17 @@ node .10x-squad/runtime/control.js validate-handoff --spec <spec.md> [--brief <b
 node .10x-squad/runtime/control.js validate-project --project <project-directory>
 node .10x-squad/runtime/control.js transition-project --project <project-directory> --state <next-state.json> --expected-updated-at <current-timestamp>
 node .10x-squad/runtime/control.js generate-registry --projects-root <projects-directory> --output <PROJECTS.md>
+node .10x-squad/runtime/control.js record-cost --project <project-directory> [--since <ISO time>] [--session-id <id> | --events <events.jsonl>] [--overwrite true]
 ```
+
+`record-cost` rebuilds `cost.md` from the Copilot session log (`events.jsonl`): credits, calls, peak
+context, premium-rate calls and compactions per dispatch, and the cost of each stretch between
+prompts. It counts every turn of a dispatch, including resumed ones that dispatch results never
+report. It finds the session from `COPILOT_AGENT_SESSION_ID` unless `--session-id` or `--events` is
+given, never replaces a hand-written `cost.md` without `--overwrite true`, and returns
+`TELEMETRY_UNAVAILABLE` when no log exists, in which case rows are kept by hand. Pass
+`--record-cost true` to `advance-phase` to refresh it at each transition. Other harnesses record no
+usage this way and keep the hand-written rows.
 
 The project registry supports gradual migration: directories without `project.json` remain visible
 as `UNMANAGED`, but must receive validated state before the squad resumes them.

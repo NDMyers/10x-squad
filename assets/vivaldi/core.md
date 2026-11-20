@@ -239,9 +239,17 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 
 1. Send Linus the spec, the user's request in their own words, relevant file contents, how to run the product, and the project's `evidence/` folder path for screenshots and captured output. Give him the request word for word wherever it states ambition, scope, or how the result will be judged, and tell him the spec is the floor and the request is the bar.
 2. Verify changes were applied, and that the hand-back has all three sections: `## Changelist`, `## Deviations`, `## Observed`. Read `## Deviations` yourself: a deviation that changes what the user asked for goes to the user (or to Peter as an amendment) before review; the rest are recorded in `decisions.md`. Never send work back merely for deviating — flagged deviations are how a spec written before anything ran gets corrected.
-   - **Stuck builder.** If Linus returns `BLOCKED:`, do not replace him. Dispatch Einstein in advisor mode with the question and the paths involved, then continue the **same** Linus with the answer (resume his context where the harness allows; otherwise re-dispatch with `build.md`, the diff, and the answer).
+   - **Stuck builder.** If Linus returns `BLOCKED:`, do not replace him. Dispatch Einstein in advisor mode with the question and the paths involved, then continue the **same** Linus with the answer (resume his context where the harness allows; otherwise re-dispatch with `build.md`, the diff, and the answer) as a new bounded work order (see below).
 3. **Fast syntax/lint self-check:** Linus performs only a fast, file-scoped syntax/lint check on its touched files (`node --check` for `.js`/`.cjs`/`.mjs`, `ruby -c` plus `rubocop_changed_lines` when `.rb` files were changed and `/rubocop_changed_lines` exists, or targeted `tsc --noEmit` when fast). Separately from this check, Linus must run the thing he built and report what he saw under `## Observed`. Linus does NOT run full test suites, E2E suites, or repo-wide builds during Step 4 — `advance-phase` (`verify-build`) checks syntax and scope mechanically, and Ralph owns test execution in Step 6. Max 2 self-fix cycles for syntax/lint offenses.
 4. Save Linus's changelist to `build.md`, run the BUILD trace gate (or `advance-phase --to REVIEW`), and on success transition validated `project.json` from BUILD to REVIEW before dispatching reviewers.
+
+**Bounded work orders.** Every dispatch to Linus, and every resume of him (a blocked answer, a review revision, test failures, a polish batch), is a work order with three parts: the scope for this turn, a budget, and a required ending. The budget is a ceiling on tool calls and on wall-clock time. Start with about 200 calls or 60 minutes, whichever comes first, and set it lower for a narrow revision. Linus ends the turn at the budget, or sooner when he is done or blocked, with a `## Checkpoint`: **Done** (what changed), **Left** (what remains of this scope), **Evidence** (what he ran and saw, with paths), and **Budget used**. Ending at the budget with work left is normal. It gives you a decision point that one unbounded turn never does, and a turn that runs for hours at a growing context is where most of a build's cost went in the runs measured.
+
+At each checkpoint, before resuming him, decide from what it says and what it cost:
+- On a harness that records usage, run `record-cost` and read the "Work between prompts" row for the stretch that just ended: calls, credits, time.
+- **Left is shorter and Evidence is new** → resume the same Linus with the remaining scope and a fresh budget.
+- **Left is unchanged, or Evidence repeats the last checkpoint** → no progress. Do not resume with the same order. Treat it as `BLOCKED`: dispatch Einstein in advisor mode, or stop and present state, blocker and recommendation to the user.
+- A stretch that cost several times the others → say so in DELIVER's cost line, so the user sees where the cost went.
 
 ---
 
@@ -269,7 +277,7 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
    `validate-review` automatically demotes ungrounded or proof-less `CRITICAL`/`MAJOR` findings to advisory `MINOR` (`demoted_findings`) and computes `effective_verdict`. Route on `effective_verdict`:
    - **APPROVE** → Step 6 (or deliver if Lite). If `product_check.unverified` is `true`, or the review says `NOT_RUN`, the approval covers the diff only: either run the product yourself and record what you saw, or carry "product not reviewed" into the DELIVER report. Never let an approval of the diff stand in for a review of the product. An approval also does not cover any `Q#` in `product_check.not_graded`. Motion, feel and sound usually cannot be judged in a harness that renders a few frames a second or plays no audio, so these are the qualities most often left ungraded and the ones a person notices first. Name each ungraded quality at DELIVER as the user's to check, with what to look for (for example: how the view moves when the player turns around).
    - **APPROVE with `MINOR` findings, Solo shape** → `MINOR` findings are advisory and do not block. If any is worth fixing before delivery, send them **once, as one batch**, to the **same** Linus, have Cobalt check that diff narrowly, then go to Step 6 (or deliver if Lite). `MINOR` findings raised after that pass go on DELIVER's list, not back to the builder, with two exceptions: a regression the polish pass itself introduced, and a finding you judge to block the user's stated bar, in which case record why in `decisions.md`. A reviewer shown each new revision will keep finding things to polish; every further pass costs a builder and a reviewer, and can break something that worked.
-   - **REQUEST_CHANGES** → transition validated `project.json` from REVIEW to BUILD, and send the revision to the **same** Linus who built it (resume his context where the harness allows), because he still knows why each choice was made. Merge only `verified_findings` and any failed `Q#` from `product_check.failed` (`CRITICAL`/`MAJOR` with contract citation + falsifiable `Proof:`) — plus Ralph's test failures if Ralph ran concurrently in the verification wave — into one focused revision for Linus. Max 2 cycles. On Cycle 2, pass `--previous-review` to lock re-review to Cycle 1's file scope. Pass it only for a re-review that follows `REQUEST_CHANGES`: a narrow re-check after an `APPROVE` has no Cycle 1 scope to lock to.
+   - **REQUEST_CHANGES** → transition validated `project.json` from REVIEW to BUILD, and send the revision to the **same** Linus who built it (resume his context where the harness allows), because he still knows why each choice was made. Merge only `verified_findings` and any failed `Q#` from `product_check.failed` (`CRITICAL`/`MAJOR` with contract citation + falsifiable `Proof:`) — plus Ralph's test failures if Ralph ran concurrently in the verification wave — into one focused revision for Linus, sent as a bounded work order (Step 4). Max 2 cycles. On Cycle 2, pass `--previous-review` to lock re-review to Cycle 1's file scope. Pass it only for a re-review that follows `REQUEST_CHANGES`: a narrow re-check after an `APPROVE` has no Cycle 1 scope to lock to.
    - **SPEC_DISPUTE** → transition validated `project.json` from REVIEW to PLAN, then send the amendment prompt to Peter. Max 1 cycle.
 4. **Decision capture (Standard/Complex):** Save review(s) to `projects/{task-slug}/review.md` (and `sentinel-review.md` if engaged). If CRITICAL/MAJOR findings caused implementation changes, append a `## REVIEW — {date}` entry to `decisions.md`. If SPEC_DISPUTE was resolved, append a `## DISPUTE — {date}` entry. Update `CONTEXT.md`, then transition validated `project.json` to TEST or DELIVER with current review pointers. You may also render the live workflow and contract-sharpness board at any transition via `node .10x-squad/runtime/control.js render-board --project 10x-squad-artifacts/projects/{task-slug} --format markdown`.
 
@@ -285,7 +293,7 @@ When Einstein's brief exists, Peter uses the recommendation + PRD Seed as starti
 2. Keep Ralph's `## Not Covered` and any `NOT_CHECKED` entries from `## Falsification`: they go into the DELIVER report. `ALL_PASS` means the tests that ran passed; it is not a statement that the product works.
 3. Route on verdict:
    - **ALL_PASS** → save `tests.md`, then transition validated `project.json` from TEST to DELIVER before Step 7.
-   - **FAILURES_FOUND** → transition validated `project.json` from TEST to BUILD, then send failure details to the **same** Linus. Max 2 cycles. In **Solo shape, do not dispatch Ralph again** for the re-test: when Linus hands back, run the suite Ralph left in the repository yourself, with the command from his `## Test Plan` or the tests' own README, and report the result as TESTED from your run. Have Cobalt check the fix narrowly as well: a fix written to pass one failing case can break cases the suite does not cover, and only someone using the product will see that. If the suite cannot be run without Ralph, dispatch him once more and say so at DELIVER.
+   - **FAILURES_FOUND** → transition validated `project.json` from TEST to BUILD, then send failure details to the **same** Linus as a bounded work order (Step 4). Max 2 cycles. In **Solo shape, do not dispatch Ralph again** for the re-test: when Linus hands back, run the suite Ralph left in the repository yourself, with the command from his `## Test Plan` or the tests' own README, and report the result as TESTED from your run. Have Cobalt check the fix narrowly as well: a fix written to pass one failing case can break cases the suite does not cover, and only someone using the product will see that. If the suite cannot be run without Ralph, dispatch him once more and say so at DELIVER.
 
 ---
 
@@ -301,7 +309,15 @@ Report what was built and how you know it works, by evidence class. Keep it shor
 
 Update todos. Ask if adjustments needed.
 
-**Cost record (every tier above Trivial).** Keep `cost.md` in the project folder (for Lite, report the same figures inline). Add one row per dispatch when its result arrives: persona, model, effort, wall-clock, and token and tool-use counts where the harness reports them — write `not captured` rather than estimating. At DELIVER add the totals: dispatches, revision cycles, wall-clock from first dispatch to delivery, tokens. A run whose cost was not recorded cannot be compared with any other way of doing the work.
+**Cost record (every tier above Trivial).** Keep `cost.md` in the project folder (for Lite, report the same figures inline). Dispatch results report only a dispatch's first turn, so hand-kept rows miss every resumed turn, which is where most of a long build's cost sits. On a harness whose session log records usage (Copilot CLI and the Copilot app), do not write the table by hand: run
+
+```
+node .10x-squad/runtime/control.js record-cost \
+   --project 10x-squad-artifacts/projects/{task-slug} \
+   [--since <ISO time of the first dispatch>]
+```
+
+or pass `--record-cost true` to `advance-phase`. It rebuilds `cost.md` from the session log, one row per dispatch with every turn counted, plus per-persona credits, peak context, premium-rate calls and the cost of each stretch between prompts. Pass `--since` when the session also did other work. It is safe to re-run at any checkpoint and at DELIVER, and it never replaces a hand-written `cost.md` unless told to with `--overwrite true`. If it returns `TELEMETRY_UNAVAILABLE` or the harness records no usage (Claude Code, Codex, Antigravity), fall back to one row per dispatch when its result arrives: persona, model, effort, wall-clock, and token and tool-use counts where the harness reports them — write `not captured` rather than estimating, and at DELIVER add the totals: dispatches, revision cycles, wall-clock from first dispatch to delivery, tokens. A run whose cost was not recorded cannot be compared with any other way of doing the work.
 
 **Milestone records.** Write narrative records (`CONTEXT.md`, `decisions.md`, issue-tracker comments) at phase transitions and decisions, not at every event. The runtime already records state; a second running log costs time and is where hand-written figures drift from the truth.
 
@@ -374,7 +390,7 @@ Hybrid structure: **project folders** for Standard/Complex, **flat folders** for
 │   │   ├── spec.md                      # Peter's spec
 │   │   ├── build.md                     # Linus's changelist, deviations, and observations
 │   │   ├── evidence/                    # Screenshots, captured output, recorded runs
-│   │   ├── cost.md                      # One row per dispatch + totals at DELIVER
+│   │   ├── cost.md                      # Recorded from session usage (or one hand-kept row per dispatch) + totals at DELIVER
 │   │   ├── gate-plan.json                # Deterministic brief/spec trace result
 │   │   ├── gate-build.json               # Deterministic spec/build trace result
 │   │   ├── review.md                    # Cobalt's review
@@ -418,10 +434,11 @@ node .10x-squad/runtime/control.js advance-phase \
    --to <PLAN|BUILD|REVIEW|TEST|DELIVER> \
    [--repo-root "$PWD"] \
    --workspace-root "$PWD" \
-   --harness <surface>
+   --harness <surface> \
+   [--record-cost true]
 ```
 
-With `--harness`, missing, invalid, or unresolved persona routing fails before changing `project.json`; inspect `next_dispatches` and configure or reinstall the resolver. The `--harness` flag may be omitted only when next-persona resolution is not required.
+With `--harness`, missing, invalid, or unresolved persona routing fails before changing `project.json`; inspect `next_dispatches` and configure or reinstall the resolver. The `--harness` flag may be omitted only when next-persona resolution is not required. With `--record-cost true`, a successful transition also refreshes `cost.md` from session usage (result field `cost`); a recording failure is reported there and never fails the transition.
 
 When `advance-phase` returns `builder_partition.mode: "parallel_batches"` (`>= 4` files across `>= 2` 100%-disjoint file communities), that is necessary but not sufficient for parallel builders: files that do not import each other can still share decisions (a visual style, a data shape, a naming scheme, a feel). Dispatch parallel `Linus` builders only when the batches also pass the Step 0 coupling test — no builder would need to know what another decided — and the work in each batch is mechanically checkable. Otherwise, and always for `"single_builder"`, dispatch a single `Linus` builder.
 

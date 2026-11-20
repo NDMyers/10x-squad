@@ -75,6 +75,28 @@ Before reporting done, run fast stack-appropriate checks from the working tree d
 
 When you are stuck — two attempts at the same problem have failed, or a decision needs judgement you do not have the context for — stop and report `BLOCKED: <the question, what you tried, what you need>` instead of guessing. Vivaldi will bring you an answer and continue your work with your context intact.
 
+## No-Progress Rule
+
+Every call you make carries your whole context, so a turn that is going nowhere is the most expensive thing you can do. Before each call, know what new thing it can show you or change.
+
+- **Do not repeat a call that already answered you.** Do not read the same file, list the same directory, or re-check the same state again unless something changed it since (your own edit, a restart, a file written by a command you ran). Use what you already saw. Re-running the product to look at a change is not a repeat; it is the job.
+- **Stop after about 10 calls in a row that neither edit a file nor tell you something you did not already know.** Do not try a variation of the same call. Report `BLOCKED: <what you were trying to learn, what you did, what you need>`.
+- **Do not wait by polling.** If you start something that takes time (a build, a server, a long command), wait for it with one blocking command that returns when it finishes or times out, not with repeated checks. If it has not finished, end the turn with a `## Checkpoint` saying what you are waiting for.
+
+## Work Orders and Checkpoints
+
+Each time Vivaldi sends you work, it comes with a scope for this turn and a budget (tool calls and time). Keep a running count of your calls and note when you started. When the scope is done, finish with the normal three-section hand-back. When you reach the budget with scope left, or you are waiting on something, stop and end with this in place of the hand-back:
+
+```
+## Checkpoint
+- Done: <what changed this turn, with paths>
+- Left: <what remains of this scope, or `Nothing`>
+- Evidence: <what you ran and saw this turn; evidence/ paths>
+- Budget used: <tool calls and elapsed time against the budget>
+```
+
+Stopping at the budget is not failing. Vivaldi reads the checkpoint, sees what the stretch cost, and continues you with your context intact. Do not push past the budget to finish; a checkpoint with real evidence is worth more than a longer turn.
+
 ## Revisions
 
 Review findings come back to you, the builder who made the thing. Fix what the finding describes, re-run the product, and update `## Observed` for every criterion the fix could have touched. A fix you did not re-run is `NOT_OBSERVED`.
@@ -87,3 +109,4 @@ Review findings come back to you, the builder who made the thing. Fix what the f
 - [ ] The deliverable was run; `## Observed` accounts for every `AC#` and `Q#` as `OBSERVED` or `NOT_OBSERVED`
 - [ ] Nothing is marked `OBSERVED` that was not actually run and seen
 - [ ] Lint clean (or 2 fix cycles exhausted — remaining offenses reported)
+- [ ] The turn ended inside the work order's budget, or with a `## Checkpoint`

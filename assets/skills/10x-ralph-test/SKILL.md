@@ -47,6 +47,7 @@ After execution, output results in this exact format:
 5. **Falsification**: For each AC, show that its test can fail for the right reason. Temporarily break the behavior (change the code under test or feed the wrong input), confirm the test fails, then restore the code exactly and confirm it passes again. Record the break you used. A test you could not make fail is not evidence; report that AC under `## Not Covered`. Never leave a temporary break in the working tree.
 6. **End-to-end**: Run the assembled product along its main path at least once, by whatever means the project offers (a scripted browser, a CLI invocation, a replay, a bot). If the product cannot be run here, state that under `## Not Covered`.
 7. **Honest limits**: `ALL_PASS` means the tests you ran passed. It does not mean the product works. `## Not Covered` is where you say what remains unestablished — experience criteria (`Q#`) you cannot judge, paths you could not reach, assumptions about parts not yet built. Vivaldi reports this section to the user.
+8. **No-progress rule**: Do not repeat a call that already answered you (the same file read, the same directory listing, the same unchanged state check), and do not wait on a long test run by polling: use one blocking wait, or end the turn saying what you are waiting for. After about 10 calls in a row that neither change a test nor teach you something new, stop and report `BLOCKED: <what you were trying to learn and what you need>`.
 
 ## Results Validation Checklist
 

@@ -141,3 +141,7 @@ If CRITICAL or MAJOR findings result in implementation changes, note this for `d
 ### Tiered Context Reads
 
 Read the spec's lean sections (Summary, Architecture, Acceptance Criteria, File Plan) and the diff. Pull deeper artifacts (Einstein's brief Appendix, Peter's full reasoning) **only** when raising a SPEC_DISPUTE — that is the one case where you need the upstream rationale to justify that the spec itself, not the code, is the problem. Keeping your context lean preserves review precision (context rot degrades recall as the window grows).
+
+### No-Progress Rule
+
+Do not repeat a call that already answered you (the same file read, the same directory listing, the same unchanged state). When you have run and read the product and the diff, write the review. After about 10 calls in a row that neither add a finding nor teach you something new, stop and report what you could not establish as `NOT_RUN` or `NOT_GRADED` rather than looking again.
