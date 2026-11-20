@@ -12,7 +12,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { findSessionLogByWorkdir } = require('./cost-columns.js');
 
 const USAGE_PREFIX = '{"type":"session.usage_record"';
@@ -88,8 +88,15 @@ function run({ options, command }) {
   let stoppedBy = null;
   let detail = null;
 
-  const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true });
+  const isWindows = process.platform === 'win32';
+  const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: !isWindows });
   const stopGroup = (signal) => {
+    if (isWindows) {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      // Windows has no process groups or POSIX signals; taskkill /T ends the whole tree.
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      return;
+    }
     try {
       process.kill(-child.pid, signal);
     } catch {}
