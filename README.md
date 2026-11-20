@@ -332,6 +332,14 @@ metrics to `evals/results.csv`; unavailable token or cost values remain blank ra
 reported as zero. One eval process owns a results CSV at a time; use separate `RESULTS_CSV` paths
 for concurrent suites.
 
+On Copilot runs the CSV also records cost from the session's usage records (credits, credits by
+persona, peak context, surcharge credits, compactions), and a task's `check.sh` may print
+`QUALITY=<0 to 1>` to record a quality score. `EVAL_MAX_SECONDS` and `EVAL_MAX_CREDITS` stop a
+runaway run and record that it was stopped, and `EVAL_SQUAD_ROOT` installs from a different squad
+checkout. A results file written before these columns existed is refused; start a new one. The first
+experiment built on this, budget and context ceiling against quality, is in
+`evals/experiments/budget-and-ceiling/`.
+
 ## The source-of-truth rule
 
 **This repo's `assets/` is the only place squad prompts are edited.** Deployed copies
