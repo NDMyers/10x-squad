@@ -44,3 +44,7 @@ The packet told the reviewer "don't correct verified facts from memory." The sam
 1. Verify whether omitting `model:` in `.agent.md` yields Auto on Nick's surfaces (docs silent; both reviewer and triage flag it).
 2. Verify current premium-request/billing semantics for Auto vs pinned frontier on the Enterprise plan (v2's "Enterprise covers the cost" doctrine predates current billing).
 3. Build `copilot-run.sh` (CLI `-p --model` runner with model-used capture) as the Copilot-side sibling of `evals/run.sh`.
+
+## Current Sentinel review evidence contract
+
+Sentinel receives the complete literal diff against the exact base SHA declared by the review context, labeled with that SHA, alongside the changed-file set, lean spec, and sensitive-surface section. File lists, summaries, and spec-derived descriptions do not stand in for the diff. If the base SHA cannot be established from review context, do not guess or substitute another revision; if the full diff cannot be supplied, disclose the incomplete evidence rather than claiming a complete review. Sentinel remains read/search-only; the orchestrator supplies repository evidence instead of granting shell access.
