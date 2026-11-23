@@ -608,6 +608,47 @@ test('install --harness claude writes only the Claude Code tree', () => {
   assert.equal(fs.existsSync(path.join(workspace, '.agents')), false);
 });
 
+test('installed review handoffs retain full base-specific diff evidence and Sentinel stays read-only', () => {
+  const installations = [
+    {
+      harness: 'copilot',
+      vivaldi: path.join('.github', 'agents', '10x-squad.agent.md'),
+      sentinel: path.join('.github', 'agents', '10x-sentinel.agent.md'),
+      tools: /^tools:\n  - "read"\n  - "search"\n  - "marrow\/\*"$/m,
+    },
+    {
+      harness: 'claude',
+      vivaldi: path.join('.claude', 'skills', '10x-squad', 'SKILL.md'),
+      sentinel: path.join('.claude', 'agents', '10x-sentinel.md'),
+      tools: /^tools: Read, Grep, Glob$/m,
+    },
+    {
+      harness: 'antigravity',
+      vivaldi: path.join('.agents', 'skills', '10x-squad', 'SKILL.md'),
+      sentinel: path.join('.agents', 'agents', '10x-sentinel.md'),
+      tools: /^tools:\n  - read_file$/m,
+    },
+  ];
+
+  assert.deepEqual(PERSONA_AGENTS.sentinel.tools, ['read', 'search', 'marrow/*']);
+  for (const installation of installations) {
+    const workspace = makeTempDir();
+    runCli(['install', '--harness', installation.harness], workspace);
+
+    const handoff = fs.readFileSync(path.join(workspace, installation.vivaldi), 'utf8');
+    assert.match(handoff, /complete literal diff against the exact declared base SHA/i, installation.harness);
+    assert.match(handoff, /Label the diff with that SHA/i, installation.harness);
+    assert.match(handoff, /including new files/i, installation.harness);
+    assert.match(handoff, /If the complete diff cannot be supplied, disclose that the evidence is incomplete/i, installation.harness);
+    assert.match(handoff, /stop without guessing or substituting another revision/i, installation.harness);
+
+    const sentinel = fs.readFileSync(path.join(workspace, installation.sentinel), 'utf8');
+    const frontmatter = sentinel.match(/^---\n([\s\S]*?)\n---/)[1];
+    assert.match(frontmatter, installation.tools, `${installation.harness} Sentinel tools`);
+    assert.doesNotMatch(frontmatter, /execute|Bash|run_command|manage_task|terminal/i, `${installation.harness} Sentinel must not have shell access`);
+  }
+});
+
 test('a Claude install never writes Claude Code settings', () => {
   // Permission for the runtime comes from the skill's allowed-tools, so the
   // installer has no reason to touch the user's .claude/settings*.json.

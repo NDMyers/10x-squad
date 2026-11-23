@@ -14,6 +14,7 @@ const {
   composeVivaldi,
   composePersonaAgent,
   composePersonaAgents,
+  composeClaudePersonaAgent,
   composeAntigravityPersonaAgent,
   ANTIGRAVITY_TOOL_MAP,
   harnessEntrypoints,
@@ -204,6 +205,20 @@ test('the Codex dispatch contract states its surface limits', () => {
   assert.match(codex, /`context_tier` has no Codex analog|context_tier` resolves to `auto`/, 'must neutralize context_tier');
 });
 
+test('composed review handoffs give Sentinel the complete literal diff and its exact base SHA', () => {
+  for (const harness of Object.keys(harnessEntrypoints)) {
+    const composed = composeVivaldi(harness);
+    assert.match(composed, /complete literal diff against the exact declared base SHA/i, `${harness} must require a literal base-specific diff`);
+    assert.match(composed, /Label the diff with that SHA/i, `${harness} must label the diff provenance`);
+    assert.match(composed, /changed-file names, summaries, or spec-derived descriptions are not substitutes/i);
+    assert.match(composed, /including new files/i);
+    assert.match(composed, /If the complete diff cannot be supplied, disclose that the evidence is incomplete/i);
+    assert.match(composed, /if it cannot be established, stop without guessing or substituting another revision/i);
+    assert.match(composed, /^\| \*\*Sentinel\*\* \|.*\| Changed-file set \+ complete literal diff labeled with the exact declared base SHA \(see Step 5\) \|/m,
+      `${harness} context matrix must permit Sentinel's diff evidence`);
+  }
+});
+
 test('composePersonaAgents produces six scoped Copilot subagents with minimal tools and no MCP inheritance', () => {
   const agents = composePersonaAgents();
   assert.equal(agents.length, 6);
@@ -235,6 +250,13 @@ test('composePersonaAgents produces six scoped Copilot subagents with minimal to
   const sentinelFm = frontmatterAndBody(composePersonaAgent('sentinel')).frontmatter;
   assert.doesNotMatch(sentinelFm, /- "edit"/);
   assert.doesNotMatch(sentinelFm, /- "execute"/);
+
+  const claudeSentinelFm = frontmatterAndBody(composeClaudePersonaAgent('sentinel')).frontmatter;
+  assert.match(claudeSentinelFm, /^tools: Read, Grep, Glob$/m);
+  assert.doesNotMatch(claudeSentinelFm, /\bBash\b/);
+
+  const antigravitySentinelFm = frontmatterAndBody(composeAntigravityPersonaAgent('sentinel')).frontmatter;
+  assert.doesNotMatch(antigravitySentinelFm, /run_command|manage_task|edit_file|write_file/);
 
   for (const [persona, spec] of Object.entries(PERSONA_AGENTS)) {
     const agyFm = frontmatterAndBody(composeAntigravityPersonaAgent(persona)).frontmatter;
